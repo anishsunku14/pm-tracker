@@ -57,4 +57,24 @@ router.post('/forgot-password/reset', (req, res) => {
   res.json({ message: 'Password reset successfully. You can now log in.' });
 });
 
+router.get('/needs-setup', (req, res) => {
+  const admin = dbGet('SELECT id FROM users WHERE role = ?', ['head_admin']);
+  res.json({ needsSetup: !admin });
+});
+
+router.post('/setup', (req, res) => {
+  const admin = dbGet('SELECT id FROM users WHERE role = ?', ['head_admin']);
+  if (admin) return res.status(400).json({ error: 'Setup already completed.' });
+
+  const { username, password, security_question, security_answer } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required.' });
+  if (password.length < 4) return res.status(400).json({ error: 'Password must be at least 4 characters.' });
+
+  const hashed = bcrypt.hashSync(password, 10);
+  dbRun('INSERT INTO users (username, password, role, security_question, security_answer) VALUES (?, ?, ?, ?, ?)',
+    [username.toLowerCase().trim(), hashed, 'head_admin', security_question || '', (security_answer || '').toLowerCase().trim()]);
+
+  res.json({ message: 'Head admin created! You can now log in.' });
+});
+
 module.exports = router;
