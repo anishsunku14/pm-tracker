@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>P.M. Offset Printers — Order Tracking</title>
+<link rel="stylesheet" href="/css/styles.css">
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">P.M. OFFSET PRINTERS</div>
+  <div class="nav-right" id="nav-right">
+    <div class="nav-tagline">Order Tracking Portal</div>
+    <button class="nav-btn" onclick="openLoginModal()">Login</button>
+  </div>
+</nav>
+<div class="cmyk-strip"><span></span><span></span><span></span><span></span></div>
+
+<main id="app"></main>
+
+<!-- LOGIN MODAL -->
+<div class="modal-bg" id="login-modal">
+  <div class="modal-dark">
+    <div class="modal-dark-hdr"><h3>LOGIN</h3><button class="modal-x" onclick="closeLoginModal()">&#x2715;</button></div>
+    <div class="modal-dark-body">
+      <div id="login-msg"></div>
+      <div id="login-form-area">
+        <div class="df"><label>Username</label><input type="text" id="login-user" placeholder="Enter username" autocomplete="username" spellcheck="false"></div>
+        <div class="df"><label>Password</label><input type="password" id="login-pass" placeholder="Enter password" autocomplete="current-password"></div>
+        <button class="btn-submit" onclick="doLogin()">SIGN IN</button>
+        <div class="modal-link"><button onclick="showForgotInModal()">Forgot password?</button></div>
+      </div>
+      <div id="forgot-form-area" style="display:none">
+        <div id="forgot-step1">
+          <div class="df"><label>Username</label><input type="text" id="forgot-user" placeholder="Enter your username"></div>
+          <button class="btn-submit" onclick="forgotGetQ()">NEXT</button>
+        </div>
+        <div id="forgot-step2" style="display:none">
+          <div class="df"><label>Security Question</label><p id="forgot-q" style="color:#aaa;font-size:13px;padding:6px 0;"></p></div>
+          <div class="df"><label>Your Answer</label><input type="text" id="forgot-ans" placeholder="Enter answer"></div>
+          <div class="df"><label>New Password</label><input type="password" id="forgot-pw" placeholder="New password"></div>
+          <button class="btn-submit" onclick="forgotReset()">RESET PASSWORD</button>
+        </div>
+        <div class="modal-link"><button onclick="showLoginInModal()">← Back to Login</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- GENERAL MODAL -->
+<div class="modal-bg" id="gen-modal"><div class="modal-light" id="gen-modal-box"></div></div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<footer>
+  <div class="ft-brand">
+    <div class="ft-name">P.M. OFFSET PRINTERS</div>
+    <div class="ft-tagline">"Communication is the key.<br>Printing is its media."</div>
+    <div class="ft-est">EST. 1999 · INDIA</div>
+  </div>
+  <div class="ft-col">
+    <div class="ft-title">CONTACT US</div>
+    <p><strong>Phone / WhatsApp</strong></p>
+    <a href="tel:+919620956044">+91 96209 56044</a>
+    <a href="https://wa.me/919620956044" target="_blank">WhatsApp →</a>
+    <br><p><strong>Email</strong></p>
+    <a href="mailto:planning@pmoffsetprinters.com">planning@pmoffsetprinters.com</a>
+  </div>
+  <div class="ft-col">
+    <div class="ft-title">ORDER SUPPORT</div>
+    <p>For order queries, have your <strong>Order ID</strong> ready.</p>
+    <br><p>Mon – Sat <strong style="color:#bbb">9:00am – 6:00pm IST</strong></p>
+  </div>
+</footer>
+<div class="ft-bottom">
+  <span>© 2026 P.M. Offset Printers</span>
+  <div class="cmyk-dots"><span></span><span></span><span></span><span></span></div>
+</div>
+
+<script src="/js/app.js"></script>
+<script src="/js/app2.js"></script>
+</body>
+</html>

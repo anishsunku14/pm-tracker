@@ -1,0 +1,16 @@
+{
+  "name": "pm-offset-printers-tracker",
+  "version": "1.0.0",
+  "description": "Order tracking system for P.M. Offset Printers",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "setup": "node setup.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "sql.js": "^1.10.0"
+  }
+}
