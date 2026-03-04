@@ -35,7 +35,31 @@ document.addEventListener('DOMContentLoaded',function(){
 });
 
 /* AUTH */
-async function checkAuth(){try{var d=await api('/api/auth/me');currentUser=d.user}catch(e){currentUser=null}render()}
+async function checkAuth(){try{var d=await api('/api/auth/me');currentUser=d.user}catch(e){currentUser=null}
+  try{var s=await api('/api/auth/needs-setup');if(s.needsSetup){renderSetup();return}}catch(e){}
+  render()}
+
+function renderSetup(){
+  $('app').innerHTML=
+    '<section class="hero"><div>'+
+      '<div class="hero-eye">First Time Setup</div>'+
+      '<h1>Welcome to<br><span>P.M. Offset</span><br>Printers.</h1>'+
+      '<p>Create your head admin account to get started.</p>'+
+    '</div><div class="lookup">'+
+      '<div class="lookup-lbl">Create Head Admin</div><div id="setup-msg"></div>'+
+      '<div class="fw"><label>Username *</label><input type="text" id="su-user" placeholder="e.g. admin"></div>'+
+      '<div class="fw"><label>Password *</label><input type="password" id="su-pass" placeholder="Min 4 characters"></div>'+
+      '<div class="fw"><label>Security Question</label><input type="text" id="su-q" placeholder="e.g. Favourite colour?"></div>'+
+      '<div class="fw"><label>Security Answer</label><input type="text" id="su-a" placeholder="Your answer"></div>'+
+      '<button class="btn-big" onclick="doSetup()">CREATE ACCOUNT</button>'+
+    '</div></section>';
+}
+async function doSetup(){
+  var u=$('su-user').value.trim(),p=$('su-pass').value,q=$('su-q').value.trim(),a=$('su-a').value.trim();
+  if(!u||!p){$('setup-msg').innerHTML='<div class="msg-err">Username and password required.</div>';return}
+  try{await api('/api/auth/setup',{method:'POST',body:{username:u,password:p,security_question:q,security_answer:a}});toast('Admin account created!');checkAuth()}
+  catch(e){$('setup-msg').innerHTML='<div class="msg-err">'+esc(e.message)+'</div>'}
+}
 
 function render(){
   if(currentUser){
