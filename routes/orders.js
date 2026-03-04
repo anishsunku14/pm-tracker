@@ -14,7 +14,7 @@ const STAGES = [
 
 // CLIENT: Track order (public)
 router.get('/track/:orderId', (req, res) => {
-  const order = dbGet('SELECT * FROM orders WHERE order_id = ?', [req.params.orderId.trim()]);
+  const order = dbGet('SELECT * FROM orders WHERE LOWER(REPLACE(order_id, " ", "")) = ?', [req.params.orderId.trim().toLowerCase().replace(/\s/g, '')]);
   if (!order) return res.status(404).json({ error: 'Order not found. Please check the Order ID and try again.' });
 
   const stages = dbAll('SELECT * FROM order_stages WHERE order_id = ? ORDER BY stage ASC', [order.order_id]);
