@@ -43,6 +43,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/po', require('./routes/po'));
 app.use('/api/clients', require('./routes/clients'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/reports', require('./routes/reports'));
 
 // Unknown API routes return JSON, not the HTML page
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));

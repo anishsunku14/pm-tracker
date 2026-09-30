@@ -2,6 +2,7 @@ const express = require('express');
 const { dbRun, dbInsert, dbBatch, dbGet, dbAll, audit, STAGES } = require('../db/database');
 const { requireAuth, requireHeadAdmin } = require('../middleware/auth');
 const P = require('../lib/poData');
+const notify = require('../lib/notify');
 const router = express.Router();
 
 /* ---------------------------------------------------------------- helpers */
@@ -128,6 +129,7 @@ router.post('/jobs/:jobId/stage', requireAuth, (req, res) => {
     touchPO(po.id);
   });
   audit(me(req), 'UPDATE_STAGE', { po_number: po.po_number, details: '"' + job.job_name + '" → ' + P.stageName(stage) });
+  notify.scheduleStageNotice(job.id);
   const archived = autoArchiveIfComplete(po, me(req));
   res.json({ message: 'Stage updated.', archived });
 });
@@ -226,8 +228,8 @@ router.post('/:id/jobs', requireAuth, (req, res) => {
   const f = jobFields(req.body);
   if (!f.job_name) return res.status(400).json({ error: 'Job name is required.' });
   const jobId = dbBatch(() => {
-    const id = dbInsert(`INSERT INTO jobs (po_id, job_name, quantity_specs, finish_type, gsm, process, embellishments, cast_and_cure, other_specifications, current_stage)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+    const id = dbInsert(`INSERT INTO jobs (po_id, job_name, quantity_specs, finish_type, gsm, process, embellishments, cast_and_cure, other_specifications, current_stage, last_notified_stage)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
       [po.id, f.job_name, f.quantity_specs, f.finish_type, f.gsm, f.process, f.embellishments, f.cast_and_cure, f.other_specifications]);
     dbRun('INSERT INTO job_stages (job_id, stage, stage_name, updated_by) VALUES (?, 1, ?, ?)', [id, P.stageName(1), me(req)]);
     touchPO(po.id);

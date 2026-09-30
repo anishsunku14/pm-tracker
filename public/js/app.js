@@ -896,7 +896,62 @@
     }
   }
 
+  /* Alert preferences: each contact picks email and/or WhatsApp */
+  async function openClientAlerts() {
+    let contacts;
+    try {
+      contacts = PM.pickArray(await PM.api.get('/api/clients/me/preferences'), ['contacts']);
+    } catch (err) {
+      PM.toast(err.message, 'error');
+      if (err.status === 401) clientLogout();
+      return;
+    }
+    const rows = contacts.length
+      ? contacts.map((c) =>
+        '<div class="pref-row" data-id="' + esc(c.id) + '"><div class="pref-who"><strong>' + esc(c.name || 'Contact') + '</strong>' +
+        (c.designation ? '<span>' + esc(c.designation) + '</span>' : '') + '</div><div class="pref-opts">' +
+        prefSwitch('notify_email', 'Email', c.email, truthy(c.notify_email), 'No email on file') +
+        prefSwitch('notify_whatsapp', 'WhatsApp', c.phone, truthy(c.notify_whatsapp), 'No mobile on file') +
+        '</div></div>').join('')
+      : '<p class="muted">There are no contacts on your account yet. Please ask P.M. Offset Printers to add your contact details.</p>';
+    PM.modal({
+      title: 'Order updates',
+      subtitle: 'Get a message every time one of your jobs moves to the next stage. Choose how each person hears from us.',
+      body: '<div class="pref-list">' + rows + '</div>' +
+        '<p class="small muted" style="margin:14px 0 0">To change an email address or mobile number, contact your P.M. Offset Printers representative.</p>',
+      foot: contacts.length ? '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="button" class="btn" data-save-prefs>Save</button>' : '<button type="button" class="btn" data-close>Close</button>',
+      onMount(el, close) {
+        const btn = el.querySelector('[data-save-prefs]');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+          const list = $$('.pref-row', el).map((r) => ({
+            id: Number(r.getAttribute('data-id')),
+            notify_email: r.querySelector('[data-pref="notify_email"]').checked ? 1 : 0,
+            notify_whatsapp: r.querySelector('[data-pref="notify_whatsapp"]').checked ? 1 : 0
+          }));
+          PM.setLoading(btn, true);
+          try {
+            const res = await PM.api.put('/api/clients/me/preferences', { contacts: list });
+            close();
+            PM.toast(res.message || 'Saved.');
+          } catch (err) {
+            PM.toast(err.message, 'error');
+          } finally { PM.setLoading(btn, false); }
+        });
+      }
+    });
+  }
+
+  function prefSwitch(key, label, target, on, missing) {
+    const disabled = !target;
+    return '<label class="switch' + (disabled ? ' disabled' : '') + '" title="' + esc(disabled ? missing : target) + '">' +
+      '<input type="checkbox" data-pref="' + key + '"' + (on && !disabled ? ' checked' : '') + (disabled ? ' disabled' : '') + '>' +
+      '<span class="track"><span class="knob"></span></span><span class="sw-text">' + label +
+      '<small>' + esc(disabled ? missing : target) + '</small></span></label>';
+  }
+
   function clientLogout() {
+    PM.api.post('/api/clients/me/logout').catch(() => {});
     PM.state.client = null;
     clientOpen.clear();
     $('#client-login-form').reset();
@@ -1145,6 +1200,7 @@
     $('#cf-status').addEventListener('change', (e) => { clientFilters.status = e.target.value; renderClientList(); });
     $('#cf-sort').addEventListener('change', (e) => { clientFilters.sort = e.target.value; renderClientList(); });
     $('#client-refresh').addEventListener('click', (e) => refreshClient(e.currentTarget));
+    $('#client-alerts').addEventListener('click', openClientAlerts);
     PM.bindAccordion($('#client-pos'), clientOpen, (card, key, detail) => {
       const po = PM.state.client.pos.find((p) => String(p.id != null ? p.id : p.number) === key);
       if (po) detail.innerHTML = clientDetail(po);

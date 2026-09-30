@@ -70,7 +70,9 @@ function createTables() {
     name TEXT,
     phone TEXT,
     email TEXT,
-    designation TEXT
+    designation TEXT,
+    notify_email INTEGER DEFAULT 1,
+    notify_whatsapp INTEGER DEFAULT 0
   )`);
 
   // ---- Purchase orders & jobs ----
@@ -144,6 +146,23 @@ function createTables() {
 
   db.run(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
+  // App settings editable by the MD (email / WhatsApp configuration)
+  db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
+
+  // Every alert attempt, for troubleshooting
+  db.run(`CREATE TABLE IF NOT EXISTS notification_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    recipient TEXT,
+    client_code TEXT,
+    po_number TEXT,
+    job_name TEXT,
+    stage TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+
   db.run('CREATE INDEX IF NOT EXISTS idx_jobs_po ON jobs(po_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_stages_job ON job_stages(job_id)');
   db.run('CREATE INDEX IF NOT EXISTS idx_notes_job ON job_notes(job_id)');
@@ -179,6 +198,15 @@ function migrate() {
   const jobCols = columns('jobs');
   if (jobCols.indexOf('is_archived') === -1) db.run('ALTER TABLE jobs ADD COLUMN is_archived INTEGER DEFAULT 0');
   if (jobCols.indexOf('archived_at') === -1) db.run('ALTER TABLE jobs ADD COLUMN archived_at DATETIME');
+  if (jobCols.indexOf('last_notified_stage') === -1) {
+    db.run('ALTER TABLE jobs ADD COLUMN last_notified_stage INTEGER');
+    // Existing jobs: treat their current stage as already notified, so nothing is sent on upgrade
+    db.run('UPDATE jobs SET last_notified_stage = current_stage');
+  }
+
+  const contactCols = columns('client_contacts');
+  if (contactCols.indexOf('notify_email') === -1) db.run('ALTER TABLE client_contacts ADD COLUMN notify_email INTEGER DEFAULT 1');
+  if (contactCols.indexOf('notify_whatsapp') === -1) db.run('ALTER TABLE client_contacts ADD COLUMN notify_whatsapp INTEGER DEFAULT 0');
 
   if (metaGet('migrated_orders_v1') || !tableExists('orders')) return;
 

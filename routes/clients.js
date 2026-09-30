@@ -13,16 +13,24 @@ function clean(v, max) {
 }
 
 function contactsFor(clientId) {
-  return dbAll('SELECT id, name, phone, email, designation FROM client_contacts WHERE client_id = ? ORDER BY id', [clientId]);
+  return dbAll('SELECT id, name, phone, email, designation, notify_email, notify_whatsapp FROM client_contacts WHERE client_id = ? ORDER BY id', [clientId]);
 }
 
+const flag01 = (v) => (v === true || v === 1 || v === '1' || v === 'true' || v === 'on' ? 1 : 0);
+
 function saveContacts(clientId, list) {
+  // Keep each existing contact's alert choices unless new ones are sent
+  const prev = {};
+  contactsFor(clientId).forEach((c) => { prev[c.id] = c; });
   dbRun('DELETE FROM client_contacts WHERE client_id = ?', [clientId]);
   (Array.isArray(list) ? list : []).slice(0, 20).forEach((c) => {
     const row = [clean(c.name), clean(c.phone, 40), clean(c.email, 120), clean(c.designation, 100)];
-    if (row.some(Boolean)) {
-      dbRun('INSERT INTO client_contacts (client_id, name, phone, email, designation) VALUES (?, ?, ?, ?, ?)', [clientId].concat(row));
-    }
+    if (!row.some(Boolean)) return;
+    const old = c.id != null ? prev[c.id] : null;
+    const ne = c.notify_email !== undefined ? flag01(c.notify_email) : (old ? old.notify_email : 1);
+    const nw = c.notify_whatsapp !== undefined ? flag01(c.notify_whatsapp) : (old ? old.notify_whatsapp : 0);
+    dbRun('INSERT INTO client_contacts (client_id, name, phone, email, designation, notify_email, notify_whatsapp) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [clientId].concat(row, [ne, nw]));
   });
 }
 
@@ -72,6 +80,7 @@ router.post('/dashboard', (req, res) => {
     return res.status(401).json({ error: 'Incorrect client code or password.' });
   }
   failures.delete(ip);
+  req.session.client = { id: client.id, code: client.client_code };
 
   const pos = dbAll(
     'SELECT p.* FROM purchase_orders p JOIN po_clients pc ON pc.po_id = p.id WHERE pc.client_id = ? AND p.is_archived = 0 ORDER BY p.created_at DESC, p.id DESC',
@@ -83,6 +92,44 @@ router.post('/dashboard', (req, res) => {
   });
 
   res.json({ client: { client_code: client.client_code, company_name: client.company_name }, pos, stages: STAGES });
+});
+
+/* ---------------------------------------------------------------- CLIENT: alert preferences */
+
+function requireClient(req, res, next) {
+  if (req.session && req.session.client && dbGet('SELECT id FROM clients WHERE id = ?', [req.session.client.id])) return next();
+  return res.status(401).json({ error: 'Please sign in with your client code again.' });
+}
+
+// Each contact chooses email and/or WhatsApp alerts for stage changes
+router.get('/me/preferences', requireClient, (req, res) => {
+  const contacts = contactsFor(req.session.client.id).map((c) => ({
+    id: c.id, name: c.name, designation: c.designation,
+    email: c.email, phone: c.phone,
+    notify_email: c.notify_email ? 1 : 0, notify_whatsapp: c.notify_whatsapp ? 1 : 0
+  }));
+  res.json({ contacts });
+});
+
+router.put('/me/preferences', requireClient, (req, res) => {
+  const list = Array.isArray(req.body.contacts) ? req.body.contacts : [];
+  const mine = {};
+  contactsFor(req.session.client.id).forEach((c) => { mine[c.id] = c; });
+  dbBatch(() => {
+    list.forEach((c) => {
+      const cur = mine[Number(c.id)];
+      if (!cur) return;
+      dbRun('UPDATE client_contacts SET notify_email = ?, notify_whatsapp = ? WHERE id = ?',
+        [cur.email ? flag01(c.notify_email) : 0, cur.phone ? flag01(c.notify_whatsapp) : 0, cur.id]);
+    });
+  });
+  audit('client:' + req.session.client.code, 'UPDATE_ALERT_PREFERENCES', { details: 'Client updated alert preferences' });
+  res.json({ message: 'Your alert preferences are saved.' });
+});
+
+router.post('/me/logout', (req, res) => {
+  if (req.session) req.session.client = null;
+  res.json({ message: 'Signed out.' });
 });
 
 /* ---------------------------------------------------------------- STAFF: manage clients */

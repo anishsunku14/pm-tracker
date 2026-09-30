@@ -28,6 +28,7 @@
   const role = () => (PM.state.user && PM.state.user.role) || 'staff';
   const isHead = () => role() === 'head_admin';
   const canChangeClientPw = () => role() === 'head_admin' || role() === 'planning';
+  const canSeeReports = () => role() === 'head_admin' || role() === 'planning';
   const keyOf = (po) => String(po.id != null ? po.id : po.number);
 
   /* ------------------------------------------------------------------------
@@ -62,9 +63,10 @@
     const hr = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: 'numeric', hour12: false }).format(new Date()), 10);
     const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
     $('#admin-greeting').textContent = greet + (u.username ? ', ' + u.username : '');
-    $$('#admin-tabs [data-role]').forEach((t) => t.classList.toggle('hidden', role() !== t.getAttribute('data-role')));
+    $$('#admin-tabs [data-role]').forEach((t) => t.classList.toggle('hidden', t.getAttribute('data-role').split(' ').indexOf(role()) === -1));
     if (!A.bound) bindOnce();
-    if ((A.tab === 'team' || A.tab === 'audit') && !isHead()) A.tab = 'orders';
+    if ((A.tab === 'team' || A.tab === 'audit' || A.tab === 'settings') && !isHead()) A.tab = 'orders';
+    if (A.tab === 'reports' && !canSeeReports()) A.tab = 'orders';
     switchTab(A.tab, true);
     loadClients(true);
     loadOrders();
@@ -86,6 +88,8 @@
     if (tab === 'clients') { renderClientsShell(); loadClients(); }
     if (tab === 'team') { renderTeamShell(); loadTeam(); }
     if (tab === 'audit') { renderAuditShell(); loadAudit(); }
+    if (tab === 'reports') { renderReportsShell(); loadReports(); }
+    if (tab === 'settings') { renderSettingsShell(); loadSettings(); }
     if (!silent) window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -839,7 +843,9 @@
       name: x.name || x.contact_name || '',
       phone: x.phone || x.mobile || '',
       email: x.email || '',
-      designation: x.designation || x.title || x.role || ''
+      designation: x.designation || x.title || x.role || '',
+      notify_email: x.notify_email,
+      notify_whatsapp: x.notify_whatsapp
     }));
     return {
       raw: c,
@@ -899,7 +905,7 @@
         (c.created_at ? '<div class="small muted">Added ' + esc(PM.fmtDate(c.created_at)) + '</div>' : '') + '</td>' +
         '<td data-label="Contacts">' + (c.contacts.length
           ? c.contacts.map((x) => '<div class="contact-mini"><div>' + esc(x.name || '—') + (x.designation ? ' <span class="d">· ' + esc(x.designation) + '</span>' : '') + '</div>' +
-            '<div class="d">' + [x.phone ? '<a href="tel:' + esc(x.phone.replace(/\s/g, '')) + '">' + esc(x.phone) + '</a>' : '', x.email ? '<a href="mailto:' + esc(x.email) + '">' + esc(x.email) + '</a>' : ''].filter(Boolean).join(' · ') + '</div></div>').join('')
+            '<div class="d">' + [x.phone ? '<a href="tel:' + esc(x.phone.replace(/\s/g, '')) + '">' + esc(x.phone) + '</a>' : '', x.email ? '<a href="mailto:' + esc(x.email) + '">' + esc(x.email) + '</a>' : ''].filter(Boolean).join(' · ') + '</div>' + alertTags(x) + '</div>').join('')
           : '<span class="muted small">No contacts</span>') + '</td>' +
         '<td data-label="POs">' + (c.poCount != null ? esc(c.poCount) : '<span class="muted">—</span>') + '</td>' +
         '<td><div class="actions">' +
@@ -910,6 +916,13 @@
       ).join('') + '</tbody></table></div>';
   }
 
+  function alertTags(x) {
+    const on = [];
+    if (x.email && PM.truthy(x.notify_email)) on.push('Email');
+    if (x.phone && PM.truthy(x.notify_whatsapp)) on.push('WhatsApp');
+    return '<div class="alert-tags">' + (on.length ? on.map((t) => '<span class="alert-tag">' + t + ' alerts</span>').join('') : '<span class="alert-tag off">No alerts</span>') + '</div>';
+  }
+
   function contactRowHTML(c) {
     c = c || {};
     return '<div class="contact-row" data-contact' + (c.id != null ? ' data-contact-id="' + esc(c.id) + '"' : '') + '>' +
@@ -917,7 +930,11 @@
       '<input type="tel" data-k="phone" placeholder="Phone" value="' + esc(c.phone) + '" aria-label="Phone">' +
       '<input type="email" data-k="email" placeholder="Email" value="' + esc(c.email) + '" aria-label="Email">' +
       '<input type="text" data-k="designation" placeholder="Designation" value="' + esc(c.designation) + '" aria-label="Designation">' +
-      '<button type="button" class="icon-btn" data-remove-contact aria-label="Remove contact">×</button></div>';
+      '<button type="button" class="icon-btn" data-remove-contact aria-label="Remove contact">×</button>' +
+      '<div class="contact-alerts"><span>Stage alerts</span>' +
+      '<label class="check mini"><input type="checkbox" data-flag="notify_email"' + (c.notify_email === undefined || PM.truthy(c.notify_email) ? ' checked' : '') + '><span class="box"></span>Email</label>' +
+      '<label class="check mini"><input type="checkbox" data-flag="notify_whatsapp"' + (PM.truthy(c.notify_whatsapp) ? ' checked' : '') + '><span class="box"></span>WhatsApp</label>' +
+      '</div></div>';
   }
 
   async function openClientForm(client) {
@@ -975,7 +992,8 @@
           if (!company) throw new Error('Company name is required.');
           const list = $$('[data-contact]', wrap).map((row) => {
             const o = {};
-            $$('input', row).forEach((i) => (o[i.getAttribute('data-k')] = i.value.trim()));
+            $$('input[data-k]', row).forEach((i) => (o[i.getAttribute('data-k')] = i.value.trim()));
+            $$('input[data-flag]', row).forEach((i) => (o[i.getAttribute('data-flag')] = i.checked ? 1 : 0));
             const cid = row.getAttribute('data-contact-id');
             if (cid) o.id = isNaN(cid) ? cid : Number(cid);
             return o;
@@ -1298,6 +1316,316 @@
           '<td data-label="Reference">' + (ref ? '<span class="po-number">' + esc(ref) + '</span>' : '<span class="muted">—</span>') + '</td>' +
           '<td data-label="Details" class="small">' + esc(x.details || '') + '</td></tr>';
       }).join('') + '</tbody></table></div>';
+  }
+
+  /* ========================================================================
+     REPORTS (MD + Planning)
+     ======================================================================== */
+  A.reportRange = A.reportRange || '90';
+  const RANGES = [['30', '30 days'], ['90', '90 days'], ['365', '12 months'], ['all', 'All time']];
+
+  function renderReportsShell() {
+    const el = $('#tab-reports');
+    if (!canSeeReports()) { el.innerHTML = PM.emptyHTML('Restricted', 'Reports are available to Planning and the Managing Director.'); return; }
+    if (el.dataset.ready) return;
+    el.dataset.ready = '1';
+    el.innerHTML =
+      '<div class="page-head"><div><h2>Reports</h2><p class="mb-0">How the press is performing. Numbers use Indian Standard Time.</p></div>' +
+      '<div class="seg" role="tablist" id="report-range">' +
+      RANGES.map((r) => '<button type="button" class="seg-btn' + (r[0] === A.reportRange ? ' active' : '') + '" data-range="' + r[0] + '">' + r[1] + '</button>').join('') +
+      '</div></div>' +
+      '<div id="report-body">' + PM.loadingHTML('Crunching the numbers…') + '</div>';
+    $('#report-range').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-range]');
+      if (!b) return;
+      A.reportRange = b.getAttribute('data-range');
+      $$('#report-range .seg-btn').forEach((x) => x.classList.toggle('active', x === b));
+      loadReports();
+    });
+    el.addEventListener('mousemove', moveTip);
+    el.addEventListener('mouseover', showTip);
+    el.addEventListener('mouseout', hideTip);
+  }
+
+  async function loadReports() {
+    if (!canSeeReports()) return;
+    const body = $('#report-body');
+    if (!body) return;
+    body.style.opacity = '.5';
+    try {
+      const d = await api.get('/api/reports?range=' + encodeURIComponent(A.reportRange));
+      body.innerHTML = reportHTML(d);
+    } catch (err) {
+      body.innerHTML = PM.emptyHTML('Could not load reports', err.message);
+      if (err.status === 401) fail(err);
+    } finally {
+      body.style.opacity = '';
+    }
+  }
+
+  function num(n, suffix) {
+    return n == null ? '<span class="muted">—</span>' : esc(n) + (suffix ? '<small>' + suffix + '</small>' : '');
+  }
+
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function monthLabel(ym, withYear) {
+    const [y, m] = ym.split('-');
+    return MONTHS[parseInt(m, 10) - 1] + (withYear ? ' ' + y : '');
+  }
+
+  function reportHTML(d) {
+    const k = d.kpis || {};
+    const rangeLabel = (RANGES.find((r) => r[0] === d.range) || RANGES[1])[1].toLowerCase();
+    const inRange = d.range === 'all' ? 'all time' : 'last ' + rangeLabel;
+
+    const tiles =
+      '<div class="kpi-grid">' +
+      kpi('POs created', num(k.pos_created), inRange) +
+      kpi('Jobs completed', num(k.jobs_completed), inRange) +
+      kpi('On-time delivery', num(k.on_time_rate, '%'), k.on_time_basis ? 'of ' + k.on_time_basis + ' completed jobs with a due date' : 'no completed jobs with a due date yet') +
+      kpi('Average turnaround', num(k.avg_turnaround_days, ' days'), 'order received to ready') +
+      kpi('In progress now', num(k.active_jobs), 'active jobs') +
+      kpi('Delayed now', num(k.delayed_now), k.delayed_now ? 'need attention' : 'all on track', k.delayed_now ? 'warn' : '') +
+      '</div>';
+
+    // POs per month — vertical bars, single series
+    const monthly = d.monthly || [];
+    const maxPos = Math.max(1, ...monthly.map((m) => m.pos));
+    const ticks = niceTicks(maxPos);
+    const top = ticks[ticks.length - 1];
+    const cols = monthly.map((m, i) => {
+      const h = (m.pos / top) * 100;
+      const last = i === monthly.length - 1;
+      return '<div class="vcol" data-tip="' + esc(monthLabel(m.month, true) + ': ' + m.pos + ' PO' + (m.pos === 1 ? '' : 's') + ' created, ' + m.jobs_completed + ' job' + (m.jobs_completed === 1 ? '' : 's') + ' completed') + '">' +
+        '<div class="vbar-wrap">' + (last && m.pos ? '<span class="vval">' + m.pos + '</span>' : '') +
+        '<div class="vbar" style="height:' + h.toFixed(1) + '%"></div></div>' +
+        '<span class="vlab">' + monthLabel(m.month, m.month.endsWith('-01') || i === 0) + '</span></div>';
+    }).join('');
+    const grid = ticks.map((t) => '<div class="gline" style="bottom:' + ((t / top) * 100).toFixed(1) + '%"><span>' + t + '</span></div>').join('');
+    const monthlyChart =
+      '<div class="chart-card span-2"><div class="chart-head"><h3>Purchase orders per month</h3><span class="muted small">Last 12 months · hover a bar for details</span></div>' +
+      '<div class="vchart"><div class="vgrid">' + grid + '</div><div class="vcols">' + cols + '</div></div></div>';
+
+    // Horizontal bar helper
+    const hbars = (rows, valueKey, fmt, tipFn) => {
+      const max = Math.max(1, ...rows.map((r) => r[valueKey] || 0));
+      return '<div class="hbars">' + rows.map((r) => {
+        const v = r[valueKey];
+        return '<div class="hrow" data-tip="' + esc(tipFn(r)) + '"><span class="hlab">' + esc(r.name) + '</span>' +
+          '<div class="htrack"><div class="hbar" style="width:' + (v ? Math.max(2, (v / max) * 100) : 0).toFixed(1) + '%"></div></div>' +
+          '<span class="hval">' + (v == null ? '—' : fmt(v)) + '</span></div>';
+      }).join('') + '</div>';
+    };
+
+    const stageAvg = d.stage_avg || [];
+    const slowest = stageAvg.filter((s) => s.avg_days != null).sort((a, b) => b.avg_days - a.avg_days)[0];
+    const stageChart =
+      '<div class="chart-card"><div class="chart-head"><h3>Average days in each stage</h3><span class="muted small">' +
+      (slowest ? 'Longest: ' + esc(slowest.name) : 'Not enough completed stages yet') + '</span></div>' +
+      hbars(stageAvg, 'avg_days', (v) => v + ' d', (r) => r.name + ': ' + (r.avg_days == null ? 'no data yet' : r.avg_days + ' days on average, across ' + r.jobs + ' job' + (r.jobs === 1 ? '' : 's'))) + '</div>';
+
+    const wipChart =
+      '<div class="chart-card"><div class="chart-head"><h3>Jobs at each stage right now</h3><span class="muted small">Active POs only</span></div>' +
+      hbars(d.wip || [], 'jobs', (v) => String(v), (r) => r.name + ': ' + r.jobs + ' job' + (r.jobs === 1 ? '' : 's')) + '</div>';
+
+    const tc = d.top_clients || [];
+    const clientsTable =
+      '<div class="chart-card span-2"><div class="chart-head"><h3>Top clients</h3><span class="muted small">By POs created, ' + esc(inRange) + '</span></div>' +
+      (tc.length
+        ? '<table class="data mini-table"><thead><tr><th>Client</th><th class="text-right">POs</th><th class="text-right">Jobs</th></tr></thead><tbody>' +
+          tc.map((c) => '<tr><td><span class="code-chip">' + esc(c.client_code) + '</span> ' + esc(c.company_name) + '</td><td class="text-right num">' + c.pos + '</td><td class="text-right num">' + c.jobs + '</td></tr>').join('') +
+          '</tbody></table>'
+        : '<p class="muted mb-0">No POs linked to client codes in this period.</p>') +
+      '</div>';
+
+    return tiles + '<div class="chart-grid">' + monthlyChart + stageChart + wipChart + clientsTable + '</div>';
+  }
+
+  function kpi(label, value, sub, tone) {
+    return '<div class="kpi' + (tone ? ' ' + tone : '') + '"><span class="kpi-label">' + esc(label) + '</span><strong>' + value + '</strong><span class="kpi-sub">' + esc(sub) + '</span></div>';
+  }
+
+  function niceTicks(max) {
+    const steps = [1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000];
+    const step = steps.find((s) => max / s <= 4) || Math.ceil(max / 4);
+    const out = [];
+    for (let v = step; v < max + step; v += step) out.push(v);
+    return out.length ? out : [1];
+  }
+
+  // Shared hover tooltip
+  let tipEl = null;
+  function showTip(e) {
+    const t = e.target.closest('[data-tip]');
+    if (!t) return;
+    if (!tipEl) { tipEl = document.createElement('div'); tipEl.className = 'chart-tip'; document.body.appendChild(tipEl); }
+    tipEl.textContent = t.getAttribute('data-tip');
+    tipEl.style.display = 'block';
+    t.classList.add('hover');
+    moveTip(e);
+  }
+  function moveTip(e) {
+    if (!tipEl || tipEl.style.display !== 'block') return;
+    const w = tipEl.offsetWidth;
+    tipEl.style.left = Math.min(window.innerWidth - w - 12, Math.max(12, e.clientX - w / 2)) + 'px';
+    tipEl.style.top = (e.clientY - tipEl.offsetHeight - 14) + 'px';
+  }
+  function hideTip(e) {
+    const t = e.target.closest('[data-tip]');
+    if (t) t.classList.remove('hover');
+    if (tipEl && (!e.relatedTarget || !e.relatedTarget.closest || !e.relatedTarget.closest('[data-tip]'))) tipEl.style.display = 'none';
+  }
+
+  /* ========================================================================
+     SETTINGS (MD only): client alerts by email and WhatsApp
+     ======================================================================== */
+  const WA_TEMPLATE_TEXT = 'Hello {{1}}, your job {{2}} ({{3}}) has moved to: {{4}}. Track your order here: {{5}} - P.M. Offset Printers';
+
+  function renderSettingsShell() {
+    const el = $('#tab-settings');
+    if (!isHead()) { el.innerHTML = PM.emptyHTML('Restricted', 'Only the Managing Director can change settings.'); return; }
+    if (el.dataset.ready) return;
+    el.dataset.ready = '1';
+    el.innerHTML =
+      '<div class="page-head"><div><h2>Client alerts</h2><p class="mb-0">When a job moves to a new stage, each client contact gets an alert on the channels they chose. Clients choose from their dashboard; staff can also set it under Clients.</p></div></div>' +
+      '<div id="settings-body">' + PM.loadingHTML('Loading settings…') + '</div>';
+    el.addEventListener('click', onSettingsClick);
+  }
+
+  async function loadSettings() {
+    if (!isHead()) return;
+    try {
+      const [s, l] = await Promise.all([api.get('/api/admin/settings'), api.get('/api/admin/notifications')]);
+      A.settings = s.settings || {};
+      A.notifLogs = PM.pickArray(l, ['logs']);
+      renderSettings();
+    } catch (err) {
+      const b = $('#settings-body');
+      if (b) b.innerHTML = PM.emptyHTML('Could not load settings', err.message);
+      if (err.status === 401) fail(err);
+    }
+  }
+
+  function sw(key, on, label) {
+    return '<label class="switch"><input type="checkbox" data-set="' + key + '"' + (on ? ' checked' : '') + '><span class="track"><span class="knob"></span></span>' +
+      (label === 'On' ? '<span class="state"></span>' : '<span>' + esc(label) + '</span>') + '</label>';
+  }
+  function field(key, label, value, opts) {
+    opts = opts || {};
+    return '<div class="field' + (opts.span ? ' span-2' : '') + '"><label for="set-' + key + '">' + esc(label) + '</label>' +
+      '<input type="' + (opts.type || 'text') + '" id="set-' + key + '" data-set="' + key + '" value="' + esc(opts.secret ? '' : value) + '"' +
+      (opts.placeholder ? ' placeholder="' + esc(opts.placeholder) + '"' : '') + ' autocomplete="off" spellcheck="false">' +
+      (opts.hint ? '<span class="hint">' + opts.hint + '</span>' : '') + '</div>';
+  }
+
+  function renderSettings() {
+    const s = A.settings;
+    const b = $('#settings-body');
+    if (!b) return;
+    const logs = A.notifLogs || [];
+    b.innerHTML =
+      '<div class="settings-grid">' +
+
+      // Email
+      '<section class="settings-card" data-section="email"><div class="sc-head"><div class="sc-ico c">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg></div>' +
+      '<div><h3>Email alerts</h3><p class="muted small mb-0">Sent from your Gmail or Google Workspace address.</p></div>' + sw('email_enabled', s.email_enabled === '1', 'On') + '</div>' +
+      '<div class="form-grid">' +
+      field('smtp_user', 'Sending email address', s.smtp_user, { type: 'email', placeholder: 'orders@yourcompany.com' }) +
+      field('smtp_pass', 'App password', '', { type: 'password', secret: true, placeholder: s.smtp_pass_set ? 'Saved (leave blank to keep)' : '16-character app password', hint: 'Not your normal password. In your Google Account: Security → 2-Step Verification → App passwords.' }) +
+      field('email_from_name', 'Sender name', s.email_from_name, { span: true }) +
+      '</div>' +
+      '<details class="adv"><summary>Advanced: mail server</summary><div class="form-grid" style="margin-top:12px">' +
+      field('smtp_host', 'SMTP server', s.smtp_host) + field('smtp_port', 'Port', s.smtp_port) +
+      '<div class="field span-2">' + sw('smtp_secure', s.smtp_secure === '1', 'Use SSL (port 465)') + '</div></div></details>' +
+      '<div class="sc-foot"><button type="button" class="btn" data-save="email">Save email settings</button>' +
+      '<div class="test-row"><input type="email" id="test-email-to" placeholder="Send a test to…"><button type="button" class="btn btn-secondary" data-test="email">Send test</button></div></div>' +
+      '</section>' +
+
+      // WhatsApp
+      '<section class="settings-card" data-section="whatsapp"><div class="sc-head"><div class="sc-ico ok">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20l1.3-3.9A8 8 0 1 1 8 19.1L4 20z"/><path d="M9 9.5c.3 1.8 2.7 4.2 4.5 4.5l1-1.2 2 .8c-.2 1.4-1.3 2-2.5 1.8-3.2-.6-5.9-3.3-6.4-6.4-.2-1.2.4-2.3 1.8-2.5l.8 2-1.2 1z"/></svg></div>' +
+      '<div><h3>WhatsApp alerts</h3><p class="muted small mb-0">Uses Meta\'s WhatsApp Business Cloud API.</p></div>' + sw('whatsapp_enabled', s.whatsapp_enabled === '1', 'On') + '</div>' +
+      '<div class="form-grid">' +
+      field('wa_phone_number_id', 'Phone number ID', s.wa_phone_number_id, { placeholder: 'From Meta: WhatsApp → API Setup' }) +
+      field('wa_token', 'Access token', '', { type: 'password', secret: true, placeholder: s.wa_token_set ? 'Saved (leave blank to keep)' : 'Permanent access token' }) +
+      field('wa_template', 'Message template name', s.wa_template, { hint: 'Must match an approved template exactly.' }) +
+      field('wa_language', 'Template language code', s.wa_language, { hint: 'Usually <code>en</code> or <code>en_US</code>.' }) +
+      '</div>' +
+      '<div class="template-box"><div class="small muted">Create this <strong>Utility</strong> template in Meta with 5 variables:</div>' +
+      '<p id="wa-template-text">' + esc(WA_TEMPLATE_TEXT) + '</p>' +
+      '<button type="button" class="link-btn small" data-copy-template>Copy text</button></div>' +
+      '<details class="adv"><summary>Advanced</summary><div class="form-grid" style="margin-top:12px">' +
+      field('wa_api_version', 'Graph API version', s.wa_api_version) + '</div></details>' +
+      '<div class="sc-foot"><button type="button" class="btn" data-save="whatsapp">Save WhatsApp settings</button>' +
+      '<div class="test-row"><input type="tel" id="test-wa-to" placeholder="Mobile, e.g. 98450 12345"><button type="button" class="btn btn-secondary" data-test="whatsapp">Send test</button></div></div>' +
+      '</section>' +
+
+      // Website address
+      '<section class="settings-card span-2" data-section="site"><div class="sc-head"><div class="sc-ico m">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg></div>' +
+      '<div><h3>Tracking link</h3><p class="muted small mb-0">Alerts include a link to this address so clients can see the full order.</p></div></div>' +
+      '<div class="inline-save">' + field('site_url', 'Website address', s.site_url) + '<button type="button" class="btn btn-secondary" data-save="site">Save</button></div>' +
+      '</section>' +
+
+      // Log
+      '<section class="settings-card span-2"><div class="sc-head"><div><h3>Recent alerts</h3><p class="muted small mb-0">The last 200 alerts sent, newest first.</p></div>' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-refresh-log>Refresh</button></div>' +
+      (logs.length
+        ? '<div class="table-wrap flat"><table class="data stack"><thead><tr><th>When (IST)</th><th>Channel</th><th>To</th><th>Update</th><th>Status</th></tr></thead><tbody>' +
+          logs.map((l) => '<tr><td data-label="When (IST)" class="nowrap small">' + esc(PM.fmtDateTime(l.created_at)) + '</td>' +
+            '<td data-label="Channel">' + (l.channel === 'email' ? 'Email' : 'WhatsApp') + '</td>' +
+            '<td data-label="To" class="small">' + esc(l.recipient) + (l.client_code ? ' <span class="code-chip">' + esc(l.client_code) + '</span>' : '') + '</td>' +
+            '<td data-label="Update" class="small">' + esc([l.po_number, l.job_name].filter(Boolean).join(' · ')) + (l.stage ? ' → ' + esc(l.stage) : '') + '</td>' +
+            '<td data-label="Status">' + (l.status === 'sent' ? '<span class="badge badge-ok">Sent</span>' : '<span class="badge badge-warn" title="' + esc(l.error) + '">Failed</span><div class="small muted">' + esc(l.error) + '</div>') + '</td></tr>').join('') +
+          '</tbody></table></div>'
+        : '<p class="muted mb-0">No alerts sent yet.</p>') +
+      '</section>' +
+      '</div>';
+  }
+
+  function collect(section) {
+    const out = {};
+    $$('[data-section="' + section + '"] [data-set]').forEach((i) => {
+      out[i.getAttribute('data-set')] = i.type === 'checkbox' ? (i.checked ? '1' : '0') : i.value;
+    });
+    return out;
+  }
+
+  async function onSettingsClick(e) {
+    const save = e.target.closest('[data-save]');
+    if (save) {
+      const sec = save.getAttribute('data-save');
+      const body = collect(sec);
+      if (sec === 'email' && body.email_enabled === '1' && !body.smtp_user) return PM.toast('Enter the sending email address first.', 'error');
+      if (sec === 'whatsapp' && body.whatsapp_enabled === '1' && !body.wa_phone_number_id) return PM.toast('Enter the WhatsApp phone number ID first.', 'error');
+      PM.setLoading(save, true);
+      try {
+        const r = await api.put('/api/admin/settings', body);
+        A.settings = r.settings || A.settings;
+        PM.toast('Saved.');
+        renderSettings();
+      } catch (err) { fail(err); } finally { PM.setLoading(save, false); }
+      return;
+    }
+    const test = e.target.closest('[data-test]');
+    if (test) {
+      const kind = test.getAttribute('data-test');
+      const payload = kind === 'email' ? { to: $('#test-email-to').value.trim() } : { phone: $('#test-wa-to').value.trim() };
+      PM.setLoading(test, true);
+      try {
+        const r = await api.post('/api/admin/settings/test-' + kind, payload);
+        PM.toast(r.message || 'Test sent.');
+        loadSettings();
+      } catch (err) { PM.toast(err.message, 'error', 8000); } finally { PM.setLoading(test, false); }
+      return;
+    }
+    if (e.target.closest('[data-copy-template]')) {
+      try { await navigator.clipboard.writeText(WA_TEMPLATE_TEXT); PM.toast('Template text copied.'); } catch (err) { PM.toast('Select the text and copy it manually.', 'error'); }
+      return;
+    }
+    const rl = e.target.closest('[data-refresh-log]');
+    if (rl) { PM.setLoading(rl, true); await loadSettings(); }
   }
 
   /* ========================================================================

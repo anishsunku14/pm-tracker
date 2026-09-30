@@ -2,6 +2,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { dbRun, dbGet, dbAll, audit } = require('../db/database');
 const { requireHeadAdmin } = require('../middleware/auth');
+const S = require('../lib/settings');
+const notify = require('../lib/notify');
 const router = express.Router();
 
 const ASSIGNABLE = ['staff', 'planning'];
@@ -66,6 +68,52 @@ router.post('/team/:userId/reset-password', requireHeadAdmin, (req, res) => {
 // Full audit log, including md_only entries (this route is MD-only)
 router.get('/audit-log', requireHeadAdmin, (req, res) => {
   const logs = dbAll('SELECT * FROM audit_log ORDER BY created_at DESC, id DESC LIMIT 1000');
+  res.json({ logs });
+});
+
+/* ---------------------------------------------------------------- Alert settings (MD only) */
+
+router.get('/settings', requireHeadAdmin, (req, res) => {
+  res.json({ settings: S.publicView() });
+});
+
+router.put('/settings', requireHeadAdmin, (req, res) => {
+  const body = req.body || {};
+  const update = {};
+  Object.keys(S.DEFAULTS).forEach((k) => {
+    if (!(k in body)) return;
+    // Passwords/tokens: an empty value means "keep the saved one"
+    if (S.SECRETS.indexOf(k) > -1 && !String(body[k] || '').trim()) return;
+    update[k] = typeof body[k] === 'boolean' ? (body[k] ? '1' : '0') : String(body[k]).trim();
+  });
+  if (update.site_url && !/^https?:\/\//.test(update.site_url)) return res.status(400).json({ error: 'Website address must start with https://' });
+  S.setMany(update);
+  audit(me(req), 'UPDATE_SETTINGS', { details: 'Updated alert settings: ' + Object.keys(update).filter((k) => S.SECRETS.indexOf(k) === -1).join(', ') + (Object.keys(update).some((k) => S.SECRETS.indexOf(k) > -1) ? ' (+ credentials)' : '') });
+  res.json({ message: 'Settings saved.', settings: S.publicView() });
+});
+
+router.post('/settings/test-email', requireHeadAdmin, async (req, res) => {
+  const to = String(req.body.to || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return res.status(400).json({ error: 'Enter a valid email address to send the test to.' });
+  try {
+    await notify.testEmail(to);
+    res.json({ message: 'Test email sent to ' + to + '.' });
+  } catch (e) {
+    res.status(400).json({ error: 'Email failed: ' + e.message });
+  }
+});
+
+router.post('/settings/test-whatsapp', requireHeadAdmin, async (req, res) => {
+  try {
+    await notify.testWhatsApp(req.body.phone);
+    res.json({ message: 'Test WhatsApp message sent.' });
+  } catch (e) {
+    res.status(400).json({ error: 'WhatsApp failed: ' + e.message });
+  }
+});
+
+router.get('/notifications', requireHeadAdmin, (req, res) => {
+  const logs = dbAll('SELECT * FROM notification_log ORDER BY created_at DESC, id DESC LIMIT 200');
   res.json({ logs });
 });
 

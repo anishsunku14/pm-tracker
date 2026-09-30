@@ -190,7 +190,8 @@
           <div>
             <span class="eyebrow">Your orders</span>
             <h1 id="client-company"></h1>
-            <span class="code-chip lg" id="client-code-chip"></span>
+            <div class="client-meta"><span class="code-chip lg" id="client-code-chip"></span>
+              <button type="button" class="btn btn-secondary btn-sm feature-alerts" id="client-alerts"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M10 3a4.5 4.5 0 0 0-4.5 4.5c0 4-1.5 5.5-1.5 5.5h12s-1.5-1.5-1.5-5.5A4.5 4.5 0 0 0 10 3z"/><path d="M8.5 16a1.6 1.6 0 0 0 3 0"/></svg>Order updates</button></div>
           </div>
           <div class="client-stats" id="client-stats"></div>
         </div>
@@ -246,7 +247,9 @@
             <button type="button" class="tab" data-tab="archive" role="tab">Archive<span class="count" id="count-archive"></span></button>
             <button type="button" class="tab" data-tab="clients" role="tab">Clients<span class="count" id="count-clients"></span></button>
             <button type="button" class="tab hidden" data-tab="team" data-role="head_admin" role="tab">Team</button>
+            <button type="button" class="tab hidden" data-tab="reports" data-role="planning head_admin" role="tab">Reports</button>
             <button type="button" class="tab hidden" data-tab="audit" data-role="head_admin" role="tab">Audit log</button>
+            <button type="button" class="tab hidden feature-alerts" data-tab="settings" data-role="head_admin" role="tab">Alerts</button>
           </nav>
         </div>
       </div>
@@ -256,7 +259,9 @@
           <div id="tab-archive" class="tab-panel hidden"></div>
           <div id="tab-clients" class="tab-panel hidden"></div>
           <div id="tab-team" class="tab-panel hidden"></div>
+          <div id="tab-reports" class="tab-panel hidden"></div>
           <div id="tab-audit" class="tab-panel hidden"></div>
+          <div id="tab-settings" class="tab-panel hidden"></div>
         </div>
       </div>
     </section>
