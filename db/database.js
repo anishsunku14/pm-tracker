@@ -107,6 +107,8 @@ function createTables() {
     current_stage INTEGER DEFAULT 1,
     is_delayed INTEGER DEFAULT 0,
     delay_reason TEXT,
+    is_archived INTEGER DEFAULT 0,
+    archived_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
@@ -173,6 +175,10 @@ function migrate() {
   const auditCols = columns('audit_log');
   if (auditCols.indexOf('po_number') === -1) db.run('ALTER TABLE audit_log ADD COLUMN po_number TEXT');
   if (auditCols.indexOf('visible_to') === -1) db.run("ALTER TABLE audit_log ADD COLUMN visible_to TEXT DEFAULT 'all'");
+
+  const jobCols = columns('jobs');
+  if (jobCols.indexOf('is_archived') === -1) db.run('ALTER TABLE jobs ADD COLUMN is_archived INTEGER DEFAULT 0');
+  if (jobCols.indexOf('archived_at') === -1) db.run('ALTER TABLE jobs ADD COLUMN archived_at DATETIME');
 
   if (metaGet('migrated_orders_v1') || !tableExists('orders')) return;
 

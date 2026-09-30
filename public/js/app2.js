@@ -105,20 +105,20 @@
     el.innerHTML =
       '<div class="stat-row" id="order-stats"></div>' +
       '<div class="toolbar">' +
-      '<div class="field grow"><label for="of-q">Search</label><input type="search" id="of-q" placeholder="PO number, customer, client code, job…" value="' + esc(f.q) + '"></div>' +
+      '<div class="field grow"><label for="of-q">Search</label><div class="input-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5L18 18"/></svg><input type="search" id="of-q" placeholder="PO, customer, client code or job" value="' + esc(f.q) + '"></div></div>' +
       '<div class="field"><label for="of-stage">Stage</label><select id="of-stage">' + PM.stageOptions('All stages') + '</select></div>' +
       '<div class="field"><label for="of-status">Status</label><select id="of-status">' +
-      '<option value="">All</option><option value="inprogress">In progress</option><option value="delayed">Delayed</option>' +
+      '<option value="">All statuses</option><option value="inprogress">In progress</option><option value="delayed">Delayed</option>' +
       '<option value="ontrack">On track</option><option value="ready">Ready / Shipped</option></select></div>' +
-      '<div class="field"><label for="of-from">Ordered from</label><input type="date" id="of-from" value="' + esc(f.from) + '"></div>' +
-      '<div class="field"><label for="of-to">Ordered to</label><input type="date" id="of-to" value="' + esc(f.to) + '"></div>' +
+      '<div class="field"><label for="of-from">From</label><input type="date" id="of-from" value="' + esc(f.from) + '"></div>' +
+      '<div class="field"><label for="of-to">To</label><input type="date" id="of-to" value="' + esc(f.to) + '"></div>' +
       '<div class="field"><label for="of-sort">Sort</label><select id="of-sort">' +
       '<option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="delivery">Delivery date</option>' +
       '<option value="updated">Recently updated</option><option value="po">PO number</option></select></div>' +
-      '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" data-po-action="refresh">Refresh</button>' +
-      '<button type="button" class="btn btn-sm" data-po-action="new">+ New PO</button></div>' +
       '</div>' +
-      '<p class="result-count" id="orders-count"></p>' +
+      '<div class="list-head"><p class="result-count" id="orders-count"></p><div class="grp">' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-po-action="refresh">Refresh</button>' +
+      '<button type="button" class="btn btn-sm" data-po-action="new"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>New PO</button></div></div>' +
       '<div id="orders-list">' + PM.loadingHTML('Loading orders…') + '</div>';
 
     $('#of-stage').value = f.stage;
@@ -166,7 +166,7 @@
       '<div class="stat-card"><strong>' + A.pos.length + '</strong><span>Active POs</span></div>' +
       '<div class="stat-card"><strong>' + jobs + '</strong><span>Jobs</span></div>' +
       '<div class="stat-card"><strong>' + delayed + '</strong><span>Delayed</span></div>' +
-      '<div class="stat-card"><strong>' + ready + '</strong><span>Ready / Shipped</span></div>';
+      '<div class="stat-card"><strong>' + ready + '</strong><span>Ready or shipped</span></div>';
   }
 
   function renderOrdersList() {
@@ -177,7 +177,7 @@
     $('#orders-count').textContent = A.pos.length ? 'Showing ' + pos.length + ' of ' + A.pos.length + ' active purchase orders' : '';
     if (!A.pos.length) {
       list.innerHTML = '<div class="empty"><h4>No active orders</h4><p>Create your first purchase order to get started.</p>' +
-        '<button type="button" class="btn btn-sm" data-po-action="new">+ New PO</button></div>';
+        '<button type="button" class="btn btn-sm" data-po-action="new">New PO</button></div>';
       return;
     }
     if (!pos.length) { list.innerHTML = PM.emptyHTML('No matching orders', 'Try adjusting your search or filters.'); return; }
@@ -192,19 +192,17 @@
   }
 
   function poDetailHTML(po) {
-    const jobs = po.jobs || [];
+    const jobs = PM.activeJobs(po);
+    const archivedJobs = (po.jobs || []).filter((j) => j.archived);
     const pid = esc(po.id);
     const meta =
-      '<div class="meta-list" style="margin-top:0">' +
-      '<div class="meta"><span class="k">Ordered</span><span class="v">' + esc(PM.fmtDate(po.date)) + '</span></div>' +
-      '<div class="meta"><span class="k">Est. Delivery</span><span class="v">' + esc(PM.fmtDate(po.delivery)) + '</span></div>' +
-      (po.updated_at ? '<div class="meta"><span class="k">Last Updated</span><span class="v">' + esc(PM.fmtDateTime(po.updated_at)) + '</span></div>' : '') +
+      '<div class="meta-list">' +
+      (po.updated_at ? '<div class="meta"><span class="k">Last updated</span><span class="v">' + esc(PM.fmtDateTime(po.updated_at)) + '</span></div>' : '') +
       '</div>';
     const actions =
       '<div class="grp">' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-po-action="edit" data-po-id="' + pid + '">Edit PO</button>' +
-      '<button type="button" class="btn btn-ghost btn-sm" data-po-action="archive" data-po-id="' + pid + '">Archive</button>' +
-      '<button type="button" class="btn btn-danger btn-sm" data-po-action="delete" data-po-id="' + pid + '">Delete</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-po-action="edit" data-po-id="' + pid + '">Edit PO</button>' +
+      '<button type="button" class="btn btn-secondary btn-sm" data-po-action="archive" data-po-id="' + pid + '">Archive PO</button>' +
       '</div>';
     const jobsHTML = jobs.length
       ? jobs.map((j, i) => PM.renderJob(j, i, {
@@ -212,14 +210,23 @@
         noteForm: true,
         canDeleteNotes: isHead(),
         actionsHtml:
-          '<button type="button" class="btn btn-ghost btn-xs" data-job-action="edit" data-job-id="' + esc(j.id) + '">Edit</button>' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-job-action="edit" data-job-id="' + esc(j.id) + '">Edit</button>' +
           (j.delayed
-            ? '<button type="button" class="btn btn-ghost btn-xs" data-job-action="clear-delay" data-job-id="' + esc(j.id) + '">Clear Delay</button>'
-            : '<button type="button" class="btn btn-ghost btn-xs" data-job-action="delay" data-job-id="' + esc(j.id) + '">Mark Delayed</button>') +
-          '<button type="button" class="btn btn-danger btn-xs" data-job-action="delete" data-job-id="' + esc(j.id) + '">Delete</button>'
+            ? '<button type="button" class="btn btn-secondary btn-xs" data-job-action="clear-delay" data-job-id="' + esc(j.id) + '">Clear delay</button>'
+            : '<button type="button" class="btn btn-secondary btn-xs" data-job-action="delay" data-job-id="' + esc(j.id) + '">Mark delayed</button>') +
+          '<button type="button" class="btn btn-secondary btn-xs" data-job-action="archive" data-job-id="' + esc(j.id) + '">Archive</button>'
       })).join('')
-      : '<div class="empty" style="margin-top:16px;padding:32px"><h4>No jobs on this PO</h4><p class="mb-0">Jobs can only be added when a PO is created.</p></div>';
-    return '<div class="po-toolbar">' + meta + actions + '</div>' + jobsHTML;
+      : '<div class="empty" style="box-shadow:none;background:var(--fill);margin-top:12px;padding:32px"><h4>No active jobs</h4><p class="mb-0">' +
+        (archivedJobs.length ? 'All jobs on this PO are archived. Restore one below.' : 'Jobs can only be added when a PO is created.') + '</p></div>';
+    const archivedHTML = archivedJobs.length
+      ? '<details class="archived-jobs"' + (jobs.length ? '' : ' open') + '><summary>Archived jobs (' + archivedJobs.length + ')</summary>' +
+        archivedJobs.map((j) =>
+          '<div class="archived-job"><div><div class="nm">' + esc(j.name) + '</div>' +
+          '<div class="dt">Archived ' + esc(PM.fmtDateTime(j.archived_at)) + ' · hidden from clients</div></div>' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-job-action="restore" data-job-id="' + esc(j.id) + '">Restore</button></div>'
+        ).join('') + '</details>'
+      : '';
+    return '<div class="po-toolbar">' + meta + actions + '</div>' + jobsHTML + archivedHTML;
   }
 
   /** Re-fetch a single PO's detail and re-render its card */
@@ -294,7 +301,7 @@
     return '<div class="client-picker" data-client-picker>' +
       '<div class="picked" data-picked></div>' +
       '<select data-client-select aria-label="Add client code"></select>' +
-      '</div><span class="hint">Optional. Link one or more client codes so these clients see this PO on their dashboard.</span>';
+      '</div><span class="hint">Linked clients see this PO on their dashboard.</span>';
   }
 
   function mountClientPicker(root, initialIds, onPick) {
@@ -340,31 +347,31 @@
         : po.codes.map((code) => (A.clients.find((c) => c.code === code) || {}).id).filter((x) => x != null).map(String);
     }
     PM.modal({
-      title: editing ? 'Edit Purchase Order' : 'New Purchase Order',
-      eyebrow: editing ? PM.poLabel(po.number) : 'Orders',
+      title: editing ? 'Edit purchase order' : 'New purchase order',
+      eyebrow: editing ? PM.poLabel(po.number) : '',
       subtitle: editing ? '' : 'Enter the PO details and every job on it. Jobs cannot be added to a PO after it is created.',
       wide: true,
       sticky: true,
       body:
         '<form id="po-form" novalidate><div class="form-error hidden" data-error></div>' +
         '<div class="form-grid">' +
-        '<div class="field"><label for="pf-number">PO Number <span class="req">*</span></label>' +
+        '<div class="field"><label for="pf-number">PO number <span class="req">*</span></label>' +
         '<input type="text" id="pf-number" class="upper" required value="' + esc(po ? po.number : '') + '" placeholder="e.g. PO-2461"></div>' +
-        '<div class="field"><label for="pf-customer">Customer Name</label>' +
+        '<div class="field"><label for="pf-customer">Customer name</label>' +
         '<input type="text" id="pf-customer" value="' + esc(po ? po.customer : '') + '" placeholder="Company or contact name"></div>' +
-        '<div class="field"><label for="pf-date">Date of Order</label>' +
+        '<div class="field"><label for="pf-date">Date of order</label>' +
         '<input type="date" id="pf-date" value="' + esc(po ? PM.toDateInput(po.date) : PM.todayIST()) + '"></div>' +
-        '<div class="field"><label for="pf-delivery">Estimated Delivery</label>' +
+        '<div class="field"><label for="pf-delivery">Estimated delivery</label>' +
         '<input type="date" id="pf-delivery" value="' + esc(po ? PM.toDateInput(po.delivery) : '') + '"></div>' +
-        '<div class="field span-2"><label>Client Codes</label>' + clientPickerHTML() + '</div>' +
+        '<div class="field span-2"><label>Client codes <span class="optional">Optional</span></label>' + clientPickerHTML() + '</div>' +
         (editing ? '' :
           '<div class="form-section-title">Jobs</div>' +
           '<div class="span-2" id="pf-jobs"></div>' +
-          '<div class="span-2"><button type="button" class="btn btn-ghost btn-sm" id="pf-add-job">+ Add Another Job</button></div>') +
+          '<div class="span-2"><button type="button" class="btn btn-ghost btn-sm" id="pf-add-job">Add another job</button></div>') +
         '</div></form>',
       foot:
-        '<button type="button" class="btn btn-ghost" data-close>Cancel</button>' +
-        '<button type="submit" class="btn" form="po-form">' + (editing ? 'Save Changes' : 'Create PO') + '</button>',
+        '<button type="button" class="btn btn-secondary" data-close>Cancel</button>' +
+        '<button type="submit" class="btn" form="po-form">' + (editing ? 'Save changes' : 'Create PO') + '</button>',
       onMount(el, close) {
         const picker = mountClientPicker(el, initialIds, (c) => {
           const cust = $('#pf-customer', el);
@@ -472,12 +479,12 @@
     const procVals = PM.asArray(job ? job.process : '').map((v) => v.toLowerCase());
 
     return '<div class="form-grid">' +
-      '<div class="field"><label><span>Job Name <span class="req">*</span></span>' +
+      '<div class="field"><label><span>Job name <span class="req">*</span></span>' +
       '<input type="text" data-f="name" required value="' + esc(job ? job.name : '') + '" placeholder="e.g. Mono cartons, Letterheads" style="margin-top:6px"></label></div>' +
-      '<div class="field"><label><span>Quantity / Specs</span>' +
+      '<div class="field"><label><span>Quantity / specs</span>' +
       '<input type="text" data-f="qty" value="' + esc(job ? job.quantity_specs : '') + '" placeholder="e.g. 5,000 pcs · A4 · 4+0" style="margin-top:6px"></label></div>' +
 
-      '<div class="field span-2"><span class="field-label">Finish Type</span><div class="check-grid">' +
+      '<div class="field span-2"><span class="field-label">Finish type</span><div class="check-grid">' +
       PM.FINISH_OPTIONS.map((o) => checkHTML('finish', o, finishVals.some((v) => v.toLowerCase() === o.toLowerCase()))).join('') +
       checkHTML('finish-other-toggle', 'Other', !!finishOther) +
       '</div><input type="text" data-f="finish-other" class="other-input' + (finishOther ? '' : ' hidden') + '" placeholder="Describe other finish" value="' + esc(finishOther) + '"></div>' +
@@ -490,14 +497,14 @@
 
       '<div class="field"><span class="field-label">Add-ons</span><div class="check-grid">' +
       checkHTML('embellishments', 'Embellishments', job && flagOn(job.embellishments)) +
-      checkHTML('cast_and_cure', 'Cast & Cure', job && flagOn(job.cast_and_cure)) +
+      checkHTML('cast_and_cure', 'Cast & cure', job && flagOn(job.cast_and_cure)) +
       '</div></div>' +
 
       '<div class="field span-2"><span class="field-label">Process</span><div class="check-grid">' +
       PM.PROCESS_OPTIONS.map((o) => checkHTML('process', o, procVals.indexOf(o.toLowerCase()) > -1)).join('') +
       '</div></div>' +
 
-      '<div class="field span-2"><label><span>Other Specifications</span>' +
+      '<div class="field span-2"><label><span>Other specifications</span>' +
       '<textarea data-f="other" rows="2" placeholder="Paper stock, die-line reference, packing instructions…" style="margin-top:6px">' + esc(job ? job.other : '') + '</textarea></label></div>' +
       '</div>';
   }
@@ -540,14 +547,14 @@
   /** Edit an existing job (new jobs can only be added while creating a PO) */
   function openJobForm(po, job) {
     PM.modal({
-      title: 'Edit Job',
+      title: 'Edit job',
       eyebrow: PM.poLabel(po.number),
       wide: true,
       sticky: true,
       body: '<form id="job-form" novalidate><div class="form-error hidden" data-error></div>' + jobFieldsHTML(job) + '</form>',
       foot:
-        '<button type="button" class="btn btn-ghost" data-close>Cancel</button>' +
-        '<button type="submit" class="btn" form="job-form">Save Job</button>',
+        '<button type="button" class="btn btn-secondary" data-close>Cancel</button>' +
+        '<button type="submit" class="btn" form="job-form">Save job</button>',
       onMount(el, close) {
         const form = $('#job-form', el);
         wireJobBlock(form);
@@ -567,15 +574,15 @@
   /* ---------- Delay form ---------- */
   function openDelayForm(po, job) {
     PM.modal({
-      title: 'Mark Job as Delayed',
+      title: 'Mark job as delayed',
       eyebrow: po.number + ' · ' + job.name,
       subtitle: 'The client will see this reason on their tracking page.',
       body:
         '<form id="delay-form" novalidate><div class="form-error hidden" data-error></div>' +
-        '<div class="field"><label for="df-reason">Reason for Delay <span class="req">*</span></label>' +
+        '<div class="field"><label for="df-reason">Reason for delay <span class="req">*</span></label>' +
         '<textarea id="df-reason" rows="3" required placeholder="e.g. Awaiting paper stock; expected by Friday.">' + esc(job.delay_reason) + '</textarea></div>' +
         '</form>',
-      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="delay-form">Mark Delayed</button>',
+      foot: '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="submit" class="btn" form="delay-form">Mark Delayed</button>',
       onMount(el, close) {
         PM.handleSubmit($('#delay-form', el), async () => {
           const reason = $('#df-reason', el).value.trim();
@@ -608,8 +615,8 @@
       if (act === 'archive') {
         const ok = await PM.confirm({
           title: 'Archive ' + PM.poLabel(po.number) + '?',
-          message: 'It will move to the Archive tab and clients will see "Order Completed". You can restore it later.',
-          confirmText: 'Archive'
+          message: 'It moves to the Archive tab and clients will see "Order completed". You can restore it at any time.',
+          confirmText: 'Archive PO'
         });
         if (!ok) return;
         try {
@@ -620,22 +627,6 @@
           loadArchive();
         } catch (err) { fail(err); }
         return;
-      }
-      if (act === 'delete') {
-        const ok = await PM.confirm({
-          title: 'Delete ' + PM.poLabel(po.number) + '?',
-          html: 'This permanently deletes the purchase order, <strong>all its jobs</strong> and their notes. This cannot be undone.',
-          confirmText: 'Delete Permanently',
-          danger: true,
-          requireText: po.number
-        });
-        if (!ok) return;
-        try {
-          await api.del('/api/po/' + encodeURIComponent(po.id));
-          PM.toast(PM.poLabel(po.number) + ' deleted.');
-          A.open.delete(keyOf(po));
-          await loadOrders();
-        } catch (err) { fail(err); }
       }
       return;
     }
@@ -655,17 +646,24 @@
         } catch (err) { fail(err); }
         return;
       }
-      if (act === 'delete') {
+      if (act === 'archive') {
         const ok = await PM.confirm({
-          title: 'Delete job "' + job.name + '"?',
-          message: 'This removes the job, its stage history and notes from ' + PM.poLabel(po.number) + '.',
-          confirmText: 'Delete Job',
-          danger: true
+          title: 'Archive "' + job.name + '"?',
+          message: 'The job is hidden from clients and moved to "Archived jobs" on this PO. Its history and notes are kept, and you can restore it at any time.',
+          confirmText: 'Archive job'
         });
         if (!ok) return;
         try {
-          await api.del('/api/po/jobs/' + encodeURIComponent(job.id));
-          PM.toast('Job deleted.');
+          await api.post('/api/po/jobs/' + encodeURIComponent(job.id) + '/archive');
+          PM.toast('"' + job.name + '" archived.');
+          await refreshPO(po.id);
+        } catch (err) { fail(err); }
+        return;
+      }
+      if (act === 'restore') {
+        try {
+          await api.post('/api/po/jobs/' + encodeURIComponent(job.id) + '/unarchive');
+          PM.toast('"' + job.name + '" restored.');
           await refreshPO(po.id);
         } catch (err) { fail(err); }
       }
@@ -684,14 +682,14 @@
         const ok = await PM.confirm({
           title: 'Move back to "' + name + '"?',
           message: '"' + job.name + '" is currently at ' + PM.STAGES[job.stage - 1] + '. Moving back clears the later stage history.',
-          confirmText: 'Move Back'
+          confirmText: 'Move back'
         });
         if (!ok) return;
       } else if (stage === 6) {
         const ok = await PM.confirm({
           title: 'Mark "' + job.name + '" as ready?',
           message: 'This moves the job to Shipping / Ready for Pickup. When every job on the PO is complete, the PO may be archived automatically.',
-          confirmText: 'Mark Ready'
+          confirmText: 'Mark ready'
         });
         if (!ok) return;
       }
@@ -748,7 +746,7 @@
     if (el.dataset.ready) { renderArchiveList(); return; }
     el.dataset.ready = '1';
     el.innerHTML =
-      '<div class="page-head"><div><h2>Archive</h2><p class="muted mb-0">Completed purchase orders. Clients looking these up will see “Order Completed”.</p></div></div>' +
+      '<div class="page-head"><div><h2>Archive</h2><p class="muted mb-0">Completed purchase orders. Clients looking these up will see “Order completed”.</p></div></div>' +
       '<div class="toolbar"><div class="field grow"><label for="ar-q">Search</label><input type="search" id="ar-q" placeholder="PO number, client, job name…"></div>' +
       '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" data-ar-action="refresh">Refresh</button></div></div>' +
       '<p class="result-count" id="archive-count"></p>' +
@@ -783,7 +781,7 @@
     if (!rows.length) { l.innerHTML = PM.emptyHTML('No matches', 'Try a different search.'); return; }
     l.innerHTML =
       '<div class="table-wrap"><table class="data stack"><thead><tr>' +
-      '<th>PO Number</th><th>Client</th><th>Date</th><th>Jobs</th><th class="text-right">Actions</th></tr></thead><tbody>' +
+      '<th>PO number</th><th>Client</th><th>Date</th><th>Jobs</th><th class="text-right">Actions</th></tr></thead><tbody>' +
       rows.map((p) =>
         '<tr><td data-label="PO Number"><span class="po-number" style="font-size:1.15rem">' + esc(p.number) + '</span></td>' +
         '<td data-label="Client">' + esc(p.customer || '—') + (p.codes.length ? '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">' + PM.renderCodes(p.codes) + '</div>' : '') + '</td>' +
@@ -817,7 +815,7 @@
       const ok = await PM.confirm({
         title: 'Permanently delete ' + PM.poLabel(po.number) + '?',
         html: 'This archived PO and all of its records will be erased. This action is <strong>logged for the Managing Director</strong> and cannot be undone.',
-        confirmText: 'Delete Forever',
+        confirmText: 'Delete permanently',
         danger: true,
         requireText: po.number
       });
@@ -860,7 +858,7 @@
     el.dataset.ready = '1';
     el.innerHTML =
       '<div class="page-head"><div><h2>Clients</h2><p class="muted mb-0">Client codes let customers log in and see all of their active POs.</p></div>' +
-      '<button type="button" class="btn btn-sm" data-cl-action="new">+ New Client</button></div>' +
+      '<button type="button" class="btn btn-sm" data-cl-action="new">New client</button></div>' +
       '<div class="toolbar"><div class="field grow"><label for="cl-q">Search</label><input type="search" id="cl-q" placeholder="Code, company, contact…"></div>' +
       '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" data-cl-action="refresh">Refresh</button></div></div>' +
       '<div id="clients-list">' + PM.loadingHTML('Loading clients…') + '</div>';
@@ -889,7 +887,7 @@
       .join(' ').toLowerCase().indexOf(q) > -1);
     if (!A.clients.length) {
       l.innerHTML = '<div class="empty"><h4>No clients yet</h4><p>Create a client code (e.g. TATA, BV01) and share it with your customer along with their password.</p>' +
-        '<button type="button" class="btn btn-sm" data-cl-action="new">+ New Client</button></div>';
+        '<button type="button" class="btn btn-sm" data-cl-action="new">New client</button></div>';
       return;
     }
     if (!rows.length) { l.innerHTML = PM.emptyHTML('No matches', 'Try a different search.'); return; }
@@ -933,27 +931,27 @@
     }
     const contacts = editing && client.contacts.length ? client.contacts : [{}];
     PM.modal({
-      title: editing ? 'Edit Client' : 'New Client',
+      title: editing ? 'Edit client' : 'New client',
       eyebrow: editing ? client.code : 'Manage Clients',
       wide: true,
       sticky: true,
       body:
         '<form id="client-form" novalidate><div class="form-error hidden" data-error></div>' +
         '<div class="form-grid">' +
-        '<div class="field"><label for="cf-code">Client Code <span class="req">*</span></label>' +
+        '<div class="field"><label for="cf-code">Client code <span class="req">*</span></label>' +
         '<input type="text" id="cf-code" class="upper" maxlength="7" required value="' + esc(editing ? client.code : '') + '" placeholder="e.g. TATA or BV01"' + (editing ? ' readonly style="background:var(--parchment)"' : '') + '>' +
         '<span class="hint">' + (editing ? 'Client codes cannot be changed once created.' : '2–4 letters, optionally followed by 1–3 numbers.') + '</span></div>' +
-        '<div class="field"><label for="cf-company">Company Name <span class="req">*</span></label>' +
+        '<div class="field"><label for="cf-company">Company name <span class="req">*</span></label>' +
         '<input type="text" id="cf-company" required value="' + esc(editing ? client.company : '') + '"></div>' +
         (editing ? '' :
-          '<div class="field"><label for="cf-pw">Client Password <span class="req">*</span></label><input type="password" id="cf-pw" autocomplete="new-password" required>' +
+          '<div class="field"><label for="cf-pw">Client password <span class="req">*</span></label><input type="password" id="cf-pw" autocomplete="new-password" required>' +
           '<span class="hint">Share this with the client. Only Planning or the MD can change it later.</span></div>' +
-          '<div class="field"><label for="cf-pw2">Confirm Password <span class="req">*</span></label><input type="password" id="cf-pw2" autocomplete="new-password" required></div>') +
+          '<div class="field"><label for="cf-pw2">Confirm password <span class="req">*</span></label><input type="password" id="cf-pw2" autocomplete="new-password" required></div>') +
         '<div class="form-section-title">Contacts</div>' +
         '<div class="span-2" id="cf-contacts">' + contacts.map(contactRowHTML).join('') + '</div>' +
         '<div class="span-2"><button type="button" class="link-btn" id="cf-add-contact">+ Add another contact</button></div>' +
         '</div></form>',
-      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="client-form">' + (editing ? 'Save Changes' : 'Create Client') + '</button>',
+      foot: '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="submit" class="btn" form="client-form">' + (editing ? 'Save changes' : 'Create client') + '</button>',
       onMount(el, close) {
         const wrap = $('#cf-contacts', el);
         $('#cf-add-contact', el).addEventListener('click', () => {
@@ -1005,14 +1003,14 @@
 
   function openClientPassword(client) {
     PM.modal({
-      title: 'Change Client Password',
+      title: 'Change client password',
       eyebrow: client.code + (client.company ? ' · ' + client.company : ''),
       subtitle: 'Remember to share the new password with the client.',
       body:
         '<form id="cpw-form" novalidate><div class="form-error hidden" data-error></div>' +
-        '<div class="field"><label for="cpw-1">New Password</label><input type="password" id="cpw-1" autocomplete="new-password" required></div>' +
-        '<div class="field"><label for="cpw-2">Confirm New Password</label><input type="password" id="cpw-2" autocomplete="new-password" required></div></form>',
-      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="cpw-form">Update Password</button>',
+        '<div class="field"><label for="cpw-1">New password</label><input type="password" id="cpw-1" autocomplete="new-password" required></div>' +
+        '<div class="field"><label for="cpw-2">Confirm New password</label><input type="password" id="cpw-2" autocomplete="new-password" required></div></form>',
+      foot: '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="submit" class="btn" form="cpw-form">Update password</button>',
       onMount(el, close) {
         PM.handleSubmit($('#cpw-form', el), async () => {
           const pw = $('#cpw-1', el).value;
@@ -1040,7 +1038,7 @@
       const ok = await PM.confirm({
         title: 'Delete client ' + c.code + '?',
         message: 'The client will no longer be able to log in. Their purchase orders are not deleted, but will be unlinked from this code.',
-        confirmText: 'Delete Client',
+        confirmText: 'Delete client',
         danger: true,
         requireText: c.code
       });
@@ -1063,7 +1061,7 @@
     el.dataset.ready = '1';
     el.innerHTML =
       '<div class="page-head"><div><h2>Team</h2><p class="muted mb-0">Add staff, assign roles and reset passwords. <strong style="font-weight:500">Planning</strong> can also change client passwords.</p></div>' +
-      '<button type="button" class="btn btn-sm" data-tm-action="new">+ Add Member</button></div>' +
+      '<button type="button" class="btn btn-sm" data-tm-action="new">Add member</button></div>' +
       '<div id="team-list">' + PM.loadingHTML('Loading team…') + '</div>';
   }
 
@@ -1100,7 +1098,7 @@
               '<option value="planning"' + (u.role === 'planning' ? ' selected' : '') + '>Planning</option></select>') + '</td>' +
           '<td data-label="Added">' + esc(PM.fmtDate(u.created_at)) + '</td>' +
           '<td><div class="actions">' +
-          '<button type="button" class="btn btn-ghost btn-xs" data-tm-action="reset" data-id="' + esc(u.id) + '">Reset Password</button>' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-tm-action="reset" data-id="' + esc(u.id) + '">Reset password</button>' +
           (head ? '' : '<button type="button" class="btn btn-danger btn-xs" data-tm-action="delete" data-id="' + esc(u.id) + '">Remove</button>') +
           '</div></td></tr>';
       }).join('') + '</tbody></table></div>';
@@ -1108,7 +1106,7 @@
 
   function openMemberForm() {
     PM.modal({
-      title: 'Add Team Member',
+      title: 'Add team member',
       eyebrow: 'Manage Team',
       sticky: true,
       body:
@@ -1118,10 +1116,10 @@
         '<div class="field"><label for="tm-pw">Password <span class="req">*</span></label><input type="password" id="tm-pw" autocomplete="new-password" required></div>' +
         '<div class="field"><label for="tm-role">Role</label><select id="tm-role"><option value="staff">Staff</option><option value="planning">Planning</option></select></div>' +
         '</div>' +
-        '<div class="field"><label for="tm-q">Security Question</label><input type="text" id="tm-q" placeholder="Optional — for password recovery"></div>' +
-        '<div class="field"><label for="tm-a">Security Answer</label><input type="text" id="tm-a" autocomplete="off"></div>' +
+        '<div class="field"><label for="tm-q">Security question</label><input type="text" id="tm-q" placeholder="Optional — for password recovery"></div>' +
+        '<div class="field"><label for="tm-a">Security answer</label><input type="text" id="tm-a" autocomplete="off"></div>' +
         '</form>',
-      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="tm-form">Add Member</button>',
+      foot: '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="submit" class="btn" form="tm-form">Add member</button>',
       onMount(el, close) {
         PM.handleSubmit($('#tm-form', el), async () => {
           const username = $('#tm-user', el).value.trim();
@@ -1156,13 +1154,13 @@
 
   function openResetStaffPw(u) {
     PM.modal({
-      title: 'Reset Password',
+      title: 'Reset password',
       eyebrow: u.username,
       body:
         '<form id="rp-form" novalidate><div class="form-error hidden" data-error></div>' +
-        '<div class="field"><label for="rp-1">New Password</label><input type="password" id="rp-1" autocomplete="new-password" required></div>' +
-        '<div class="field"><label for="rp-2">Confirm New Password</label><input type="password" id="rp-2" autocomplete="new-password" required></div></form>',
-      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="rp-form">Reset Password</button>',
+        '<div class="field"><label for="rp-1">New password</label><input type="password" id="rp-1" autocomplete="new-password" required></div>' +
+        '<div class="field"><label for="rp-2">Confirm New password</label><input type="password" id="rp-2" autocomplete="new-password" required></div></form>',
+      foot: '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="submit" class="btn" form="rp-form">Reset password</button>',
       onMount(el, close) {
         PM.handleSubmit($('#rp-form', el), async () => {
           const pw = $('#rp-1', el).value;
@@ -1224,11 +1222,11 @@
     if (el.dataset.ready) { renderAuditList(); return; }
     el.dataset.ready = '1';
     el.innerHTML =
-      '<div class="page-head"><div><h2>Audit Log</h2><p class="muted mb-0">Every change made in the system, newest first. Rows marked <span class="badge badge-crimson no-dot" style="padding:1px 8px">MD only</span> are visible to you alone.</p></div></div>' +
+      '<div class="page-head"><div><h2>Audit log</h2><p class="muted mb-0">Every change made in the system, newest first. Rows marked <span class="badge badge-md no-dot">MD only</span> are visible to you alone.</p></div></div>' +
       '<div class="toolbar">' +
       '<div class="field grow"><label for="au-q">Search</label><input type="search" id="au-q" placeholder="User, PO number, details…"></div>' +
       '<div class="field"><label for="au-action">Action</label><select id="au-action"><option value="">All actions</option></select></div>' +
-      '<div class="field" style="flex:0 0 auto;justify-content:flex-end"><label class="check" style="margin-top:18px"><input type="checkbox" id="au-md"><span class="box"></span>MD-only entries</label></div>' +
+      '<div class="field" style="flex:0 0 auto;justify-content:flex-end"><label class="check" style="margin-top:18px"><input type="checkbox" id="au-md"><span class="box"></span>MD-only</label></div>' +
       '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" id="au-refresh">Refresh</button></div>' +
       '</div>' +
       '<p class="result-count" id="audit-count"></p>' +
@@ -1264,6 +1262,7 @@
   function actionClass(a) {
     a = String(a || '').toUpperCase();
     if (/DELETE|REMOVE/.test(a)) return 'del';
+    if (/ARCHIVE/.test(a)) return 'archive';
     if (/CREATE|ADD|SETUP/.test(a)) return 'create';
     if (/DELAY|RESET|PASSWORD|ROLE/.test(a)) return 'warn';
     return '';

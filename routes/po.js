@@ -51,7 +51,7 @@ function jobFields(body) {
 
 /** Archive the PO automatically once every job is at the final stage */
 function autoArchiveIfComplete(po, user) {
-  const counts = dbGet('SELECT COUNT(*) AS total, SUM(CASE WHEN current_stage >= 6 THEN 1 ELSE 0 END) AS done FROM jobs WHERE po_id = ?', [po.id]);
+  const counts = dbGet('SELECT COUNT(*) AS total, SUM(CASE WHEN current_stage >= 6 THEN 1 ELSE 0 END) AS done FROM jobs WHERE po_id = ? AND COALESCE(is_archived, 0) = 0', [po.id]);
   if (counts.total > 0 && counts.done === counts.total && !po.is_archived) {
     dbRun('UPDATE purchase_orders SET is_archived = 1, archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [po.id]);
     audit(user, 'AUTO_ARCHIVE_PO', { po_number: po.po_number, details: 'All jobs complete, PO archived automatically' });
@@ -91,14 +91,23 @@ router.put('/jobs/:jobId', requireAuth, (req, res) => {
   res.json({ message: 'Job updated.' });
 });
 
-// Delete job
-router.delete('/jobs/:jobId', requireAuth, (req, res) => {
+// Archive a job (hidden from clients, restorable). Jobs are never deleted.
+router.post('/jobs/:jobId/archive', requireAuth, (req, res) => {
   const { job, po } = P.findJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
-  dbBatch(() => P.deleteJobCascade(dbRun, job.id));
+  dbRun('UPDATE jobs SET is_archived = 1, archived_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [job.id]);
   touchPO(po.id);
-  audit(me(req), 'DELETE_JOB', { po_number: po.po_number, details: 'Deleted job "' + job.job_name + '"' });
-  res.json({ message: 'Job deleted.' });
+  audit(me(req), 'ARCHIVE_JOB', { po_number: po.po_number, details: 'Archived job "' + job.job_name + '"' });
+  res.json({ message: 'Job archived.' });
+});
+
+router.post('/jobs/:jobId/unarchive', requireAuth, (req, res) => {
+  const { job, po } = P.findJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found.' });
+  dbRun('UPDATE jobs SET is_archived = 0, archived_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [job.id]);
+  touchPO(po.id);
+  audit(me(req), 'UNARCHIVE_JOB', { po_number: po.po_number, details: 'Restored job "' + job.job_name + '"' });
+  res.json({ message: 'Job restored.' });
 });
 
 // Set job stage (1–6). Moving back clears later stage history.
@@ -258,15 +267,6 @@ router.delete('/:id/archive', requireAuth, (req, res) => {
     visible_to: 'md_only'
   });
   res.json({ message: 'Archived PO deleted.' });
-});
-
-// Delete an active PO
-router.delete('/:id', requireAuth, (req, res) => {
-  const po = dbGet('SELECT * FROM purchase_orders WHERE id = ?', [Number(req.params.id)]);
-  if (!po) return res.status(404).json({ error: 'PO not found.' });
-  dbBatch(() => P.deletePOCascade(dbRun, po.id));
-  audit(me(req), 'DELETE_PO', { po_number: po.po_number, details: 'Deleted PO' + (po.customer_name ? ' for ' + po.customer_name : '') });
-  res.json({ message: 'PO deleted.' });
 });
 
 module.exports = router;

@@ -250,9 +250,16 @@
       delay_reason: j.delay_reason || '',
       history: pickArray(j.stages || j.stage_history || j.stageHistory || [], []),
       notes,
+      archived: truthy(j.is_archived),
+      archived_at: j.archived_at || null,
       created_at: j.created_at,
       updated_at: j.updated_at
     };
+  };
+
+  /** Jobs that are not archived */
+  PM.activeJobs = function (po) {
+    return (po.jobs || []).filter((j) => !j.archived);
   };
 
   function normCodes(p) {
@@ -288,7 +295,7 @@
       codes: normCodes(p),
       clientIds: normClientIds(p),
       jobs,
-      jobCount: jobs ? jobs.length : parseInt(p.job_count || p.jobs_count || 0, 10) || 0,
+      jobCount: jobs ? jobs.filter((j) => !j.archived).length : parseInt(p.job_count || p.jobs_count || 0, 10) || 0,
       jobNames: jobs ? jobs.map((j) => j.name) : asArray(p.job_names || p.jobs_summary || ''),
       archived: truthy(p.is_archived != null ? p.is_archived : p.archived) || status === 'archived',
       archived_at: p.archived_at || null,
@@ -299,7 +306,7 @@
 
   /** Summary numbers for a PO */
   PM.poStats = function (po) {
-    const jobs = po.jobs || [];
+    const jobs = PM.activeJobs(po);
     if (!jobs.length) return { pct: 0, delayed: 0, ready: 0, total: 0 };
     const sum = jobs.reduce((a, j) => a + (j.stage - 1) / 5, 0);
     return {
@@ -320,16 +327,35 @@
     return h ? h.completed_at || h.created_at || h.updated_at || null : null;
   }
 
+  /* Colour along the C → M → Y → K spectrum, t in [0, 1] */
+  const INK_STOPS = [[0, [0, 180, 216]], [1 / 3, [224, 64, 251]], [2 / 3, [253, 216, 53]], [1, [17, 17, 17]]];
+  function inkAt(t) {
+    for (let k = 1; k < INK_STOPS.length; k++) {
+      const [t1, c1] = INK_STOPS[k];
+      const [t0, c0] = INK_STOPS[k - 1];
+      if (t <= t1) {
+        const f = (t - t0) / (t1 - t0);
+        return c0.map((v, i) => Math.round(v + (c1[i] - v) * f));
+      }
+    }
+    return INK_STOPS[INK_STOPS.length - 1][1];
+  }
+  function rgb(c) { return 'rgb(' + c.join(',') + ')'; }
+  function onInk(c) { return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255 > 0.62 ? '#1d1d1f' : '#fff'; }
+  PM.stageInk = function (n) { return rgb(inkAt((n - 1) / 5)); };
+
   PM.renderPipeline = function (job, editable) {
     const items = PM.STAGES.map((name, i) => {
       const n = i + 1;
+      const ink = inkAt(i / 5), prev = inkAt(Math.max(0, i - 1) / 5);
+      const vars = '--ink:' + rgb(ink) + ';--prev:' + rgb(prev) + ';--on-ink:' + onInk(ink);
       let cls = 'pending';
       if (n < job.stage) cls = 'done';
       else if (n === job.stage) cls = 'current' + (n === 6 ? ' final' : '') + (job.delayed ? ' delayed' : '');
       const when = n <= job.stage ? stageWhen(job, n) : null;
       const dot = cls === 'done' || cls.indexOf('final') > -1 ? CHECK_SVG : String(n);
       return (
-        '<li class="' + cls + '" data-stage="' + n + '"' + (editable ? ' title="Set stage: ' + esc(name) + '"' : '') + '>' +
+        '<li class="' + cls + '" data-stage="' + n + '" style="' + vars + '"' + (editable ? ' title="Set stage: ' + esc(name) + '"' : '') + '>' +
         '<span class="dot">' + dot + '</span>' +
         '<span class="name">' + esc(name) + '</span>' +
         (when ? '<span class="when">' + esc(PM.fmtShort(when)) + '</span>' : '') +
@@ -350,12 +376,12 @@
   PM.renderSpecs = function (job) {
     const specs = [];
     specs.push(['GSM', job.gsm ? esc(job.gsm) : '<span class="no">—</span>']);
-    specs.push(['Finish Type', job.finish_type ? esc(job.finish_type) : '<span class="no">—</span>']);
+    specs.push(['Finish', job.finish_type ? esc(job.finish_type) : '<span class="no">—</span>']);
     specs.push(['Process', job.process ? esc(job.process) : '<span class="no">—</span>']);
     specs.push(['Embellishments', flagVal(job.embellishments)]);
-    specs.push(['Cast &amp; Cure', flagVal(job.cast_and_cure)]);
+    specs.push(['Cast &amp; cure', flagVal(job.cast_and_cure)]);
     let html = specs.map((s) => '<div class="spec"><span class="k">' + s[0] + '</span><span class="v">' + s[1] + '</span></div>').join('');
-    if (job.other) html += '<div class="spec wide"><span class="k">Other Specifications</span><span class="v">' + esc(job.other) + '</span></div>';
+    if (job.other) html += '<div class="spec wide"><span class="k">Other specifications</span><span class="v">' + esc(job.other) + '</span></div>';
     return '<div class="specs">' + html + '</div>';
   };
 
@@ -373,7 +399,7 @@
     )).join('');
     return (
       '<div class="notes">' +
-      '<div class="notes-head"><span>Notes &amp; Activity' + (notes.length ? ' (' + notes.length + ')' : '') + '</span>' +
+      '<div class="notes-head"><span>Notes' + (notes.length ? ' (' + notes.length + ')' : '') + '</span>' +
       (notes.length > limit ? '<button type="button" class="link-btn small notes-toggle" data-action="toggle-notes">Show all</button>' : '') +
       '</div>' +
       (notes.length ? '<ul class="note-list">' + items + '</ul>' : '<p class="note-empty">No notes yet.</p>') +
@@ -387,7 +413,7 @@
   PM.jobBadge = function (job) {
     if (job.delayed) return '<span class="badge badge-warn">Delayed</span>';
     if (job.stage === 6) return '<span class="badge badge-ok">Ready / Shipped</span>';
-    return '<span class="badge badge-crimson">Stage ' + job.stage + ' of 6</span>';
+    return '<span class="badge badge-crimson" style="color:' + PM.stageInk(job.stage) + '"><span style="color:var(--text)">' + esc(PM.STAGES[job.stage - 1]) + '</span></span>';
   };
 
   /**
@@ -397,13 +423,13 @@
     opts = opts || {};
     return (
       '<article class="job' + (job.delayed ? ' is-delayed' : '') + '" data-job-id="' + esc(job.id) + '">' +
-      '<header class="job-head"><div>' +
-      '<div class="job-title"><span class="job-index">Job ' + (idx + 1) + '</span><h4>' + esc(job.name) + '</h4></div>' +
-      (job.quantity_specs ? '<div class="small muted">' + esc(job.quantity_specs) + '</div>' : '') +
+      '<header class="job-head"><div class="job-title">' +
+      '<h4>' + esc(job.name) + '</h4>' +
+      '<span class="job-index">Job ' + (idx + 1) + (job.quantity_specs ? ' · ' + esc(job.quantity_specs) : '') + '</span>' +
       '</div><div class="job-actions">' + PM.jobBadge(job) + (opts.actionsHtml || '') + '</div></header>' +
       '<div class="job-body">' +
       (job.delayed
-        ? '<div class="delay-banner"><span>⚠</span><div><strong>This job is delayed.</strong>' + (job.delay_reason ? ' ' + esc(job.delay_reason) : '') + '</div></div>'
+        ? '<div class="delay-banner"><div><strong>Delayed.</strong>' + (job.delay_reason ? ' ' + esc(job.delay_reason) : '') + '</div></div>'
         : '') +
       PM.renderPipeline(job, !!opts.editable) +
       PM.renderSpecs(job) +
@@ -420,8 +446,10 @@
   PM.renderPOSummary = function (po) {
     const st = PM.poStats(po);
     const jobsLabel = po.jobs ? st.total + (st.total === 1 ? ' job' : ' jobs') : (po.jobCount ? po.jobCount + ' jobs' : 'Jobs');
+    const remaining = po.jobs ? 100 - st.pct : 100;
     const flags = [];
     if (st.delayed) flags.push('<span class="badge badge-warn">' + st.delayed + ' delayed</span>');
+    if (po.jobs && !st.total) flags.push('<span class="badge badge-muted no-dot">No jobs</span>');
     if (po.jobs && st.total && st.ready === st.total) flags.push('<span class="badge badge-ok">Ready</span>');
     return (
       '<div class="po-summary" tabindex="0" role="button" aria-expanded="false">' +
@@ -429,39 +457,30 @@
       '<span class="cust">' + esc(po.customer || '—') + '</span>' +
       (po.codes.length ? '<div class="codes">' + PM.renderCodes(po.codes) + '</div>' : '') +
       '</div>' +
-      '<div class="po-progress"><div class="bar"><span style="width:' + st.pct + '%"></span></div>' +
+      '<div class="po-progress"><div class="bar"><span style="width:' + remaining + '%"></span></div>' +
       '<div class="lbl"><span>' + jobsLabel + '</span><span>' + (po.jobs ? st.pct + '% complete' : '') + '</span></div></div>' +
       '<div class="po-dates"><div><span class="k">Ordered</span>' + esc(PM.fmtDate(po.date)) + '</div>' +
       '<div><span class="k">Due</span>' + esc(PM.fmtDate(po.delivery)) + '</div></div>' +
       '<div style="display:flex;gap:10px;align-items:center;justify-content:flex-end">' +
       '<div class="po-flags">' + flags.join('') + '</div><span class="chev" aria-hidden="true">' +
-      '<svg width="12" height="8" viewBox="0 0 12 8"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.5" fill="none"/></svg></span></div>' +
+      '<svg width="11" height="7" viewBox="0 0 12 8"><path d="M1 1l5 5 5-5" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>' +
       '</div>'
     );
   };
 
-  function ring(pct) {
-    const r = 28, c = 2 * Math.PI * r;
-    return (
-      '<svg class="ring" viewBox="0 0 64 64"><circle class="bg" cx="32" cy="32" r="' + r + '"/>' +
-      '<circle class="fg" cx="32" cy="32" r="' + r + '" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + (c * (1 - pct / 100)).toFixed(2) +
-      '" transform="rotate(-90 32 32)"/></svg>'
-    );
-  }
-  PM.ring = ring;
 
   /** Filter + sort helper shared by client & admin lists */
   PM.filterPOs = function (pos, f) {
     const q = (f.q || '').trim().toLowerCase().replace(/\s+/g, '');
     let out = pos.filter((po) => {
       if (q) {
-        const hay = [po.number, po.customer, po.codes.join(' '), (po.jobs || []).map((j) => j.name + ' ' + j.quantity_specs).join(' '), po.jobNames.join(' ')]
+        const hay = [po.number, po.customer, po.codes.join(' '), PM.activeJobs(po).map((j) => j.name + ' ' + j.quantity_specs).join(' '), po.jobNames.join(' ')]
           .join(' ').toLowerCase().replace(/\s+/g, '');
         if (hay.indexOf(q) === -1) return false;
       }
       if (f.stage) {
         const s = parseInt(f.stage, 10);
-        if (!(po.jobs || []).some((j) => j.stage === s)) return false;
+        if (!PM.activeJobs(po).some((j) => j.stage === s)) return false;
       }
       if (f.status) {
         const st = PM.poStats(po);
@@ -556,7 +575,7 @@
     back.setAttribute('aria-modal', 'true');
     back.innerHTML =
       '<div class="modal' + (opts.wide ? ' wide' : '') + '">' +
-      '<button type="button" class="icon-btn modal-close" data-close aria-label="Close">×</button>' +
+      '<button type="button" class="icon-btn modal-close" data-close aria-label="Close"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 3l10 10M13 3L3 13"/></svg></button>' +
       '<div class="modal-head">' + (opts.eyebrow ? '<span class="eyebrow">' + esc(opts.eyebrow) + '</span>' : '') +
       '<h3>' + esc(opts.title || '') + '</h3>' + (opts.subtitle ? '<p>' + esc(opts.subtitle) + '</p>' : '') + '</div>' +
       '<div class="modal-body">' + (opts.body || '') + '</div>' +
@@ -594,13 +613,13 @@
       const need = opts.requireText;
       PM.modal({
         title: opts.title || 'Are you sure?',
-        eyebrow: opts.eyebrow || 'Please confirm',
+        eyebrow: opts.eyebrow || '',
         body:
-          '<p style="margin-top:0">' + (opts.html || esc(opts.message || '')) + '</p>' +
-          (need ? '<div class="field"><label>Type <strong style="color:var(--crimson)">' + esc(need) + '</strong> to confirm</label><input type="text" data-confirm-input autocomplete="off"></div>' : ''),
+          '<p style="margin-top:0;color:var(--text-2)">' + (opts.html || esc(opts.message || '')) + '</p>' +
+          (need ? '<div class="field"><label>Type <strong>' + esc(need) + '</strong> to confirm</label><input type="text" data-confirm-input autocomplete="off"></div>' : ''),
         foot:
-          '<button type="button" class="btn btn-ghost" data-close>Cancel</button>' +
-          '<button type="button" class="btn ' + (opts.danger ? 'btn-danger' : '') + '" data-ok' + (need ? ' disabled' : '') + '>' + esc(opts.confirmText || 'Confirm') + '</button>',
+          '<button type="button" class="btn btn-secondary" data-close>Cancel</button>' +
+          '<button type="button" class="btn ' + (opts.danger ? 'btn-danger-solid' : '') + '" data-ok' + (need ? ' disabled' : '') + '>' + esc(opts.confirmText || 'Confirm') + '</button>',
         noAutofocus: !need,
         onMount(el, close) {
           const ok = $('[data-ok]', el);
@@ -694,12 +713,12 @@
       });
     } catch (err) {
       out.innerHTML =
-        '<div class="card completed-card">' +
-        '<div class="seal" style="border-color:var(--line-strong);color:var(--muted)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg></div>' +
+        '<div class="completed-card">' +
+        '<div class="seal muted-seal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg></div>' +
         '<h2>' + (err.status === 404 ? 'Order not found' : 'Unable to load order') + '</h2>' +
-        '<p class="muted" style="max-width:440px;margin:0 auto 22px">' +
+        '<p class="muted" style="max-width:420px;margin:0 auto 24px">' +
         esc(err.status === 404 ? 'We couldn\'t find PO "' + num + '". Please check the number and try again, or contact your P.M. Offset Printers representative.' : err.message) +
-        '</p><button type="button" class="btn btn-outline" data-go="landing">Try another PO</button></div>';
+        '</p><button type="button" class="btn" data-go="landing">Try another PO</button></div>';
     }
   }
   PM.trackPO = trackPO;
@@ -717,12 +736,12 @@
 
     if (archived) {
       return (
-        '<div class="card completed-card">' +
-        '<div class="seal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>' +
+        '<div class="completed-card">' +
+        '<div class="orbs soft" aria-hidden="true"><i class="orb oc"></i><i class="orb om"></i><i class="orb oy"></i></div>' +
+        '<div class="seal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div>' +
         '<span class="eyebrow">' + esc(PM.poLabel(po.number || typed)) + '</span>' +
-        '<h2>Order Completed</h2>' +
-        '<div class="rule" style="justify-content:center"><span></span></div>' +
-        '<p class="muted" style="max-width:460px;margin:0 auto">' +
+        '<h2>Order completed.</h2>' +
+        '<p class="muted" style="max-width:440px;margin:0 auto">' +
         esc(data.message && /complet/i.test(data.message) ? data.message : 'This order has been completed and delivered. Thank you for choosing P.M. Offset Printers.') +
         '</p>' +
         (po.archived_at ? '<p class="small muted" style="margin-top:14px">Completed on ' + esc(PM.fmtDate(po.archived_at)) + '</p>' : '') +
@@ -734,25 +753,27 @@
     const st = PM.poStats(po);
     const r = 28, c = 2 * Math.PI * r;
     return (
-      '<div class="card">' +
-      '<div class="po-hero"><div>' +
-      '<span class="eyebrow">Purchase Order</span>' +
+      '<div class="po-sheet">' +
+      '<div class="po-hero"><div class="orbs soft" aria-hidden="true"><i class="orb oc"></i><i class="orb om"></i><i class="orb oy"></i></div><div>' +
+      '<span class="eyebrow">Purchase order</span>' +
       '<h2 class="po-number">' + esc(po.number || typed) + '</h2>' +
       '<dl class="meta-list">' +
       (po.customer ? '<div class="meta"><dt>Customer</dt><dd>' + esc(po.customer) + '</dd></div>' : '') +
-      '<div class="meta"><dt>Order Date</dt><dd>' + esc(PM.fmtDate(po.date)) + '</dd></div>' +
-      '<div class="meta"><dt>Est. Delivery</dt><dd>' + esc(PM.fmtDate(po.delivery)) + '</dd></div>' +
+      '<div class="meta"><dt>Order date</dt><dd>' + esc(PM.fmtDate(po.date)) + '</dd></div>' +
+      '<div class="meta"><dt>Estimated delivery</dt><dd>' + esc(PM.fmtDate(po.delivery)) + '</dd></div>' +
       '<div class="meta"><dt>Jobs</dt><dd>' + jobs.length + '</dd></div>' +
       '</dl></div>' +
       '<div class="summary-ring">' +
-      '<svg class="ring" viewBox="0 0 64 64"><circle class="bg" cx="32" cy="32" r="' + r + '"/>' +
-      '<circle class="fg" cx="32" cy="32" r="' + r + '" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + c.toFixed(2) +
+      '<svg class="ring" viewBox="0 0 64 64"><defs><linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">' +
+      '<stop offset="0" stop-color="#00b4d8"/><stop offset=".5" stop-color="#e040fb"/><stop offset="1" stop-color="#fdd835"/></linearGradient></defs>' +
+      '<circle class="bg" cx="32" cy="32" r="' + r + '"/>' +
+      '<circle class="fg" cx="32" cy="32" r="' + r + '" stroke="url(#ringGrad)" stroke-dasharray="' + c.toFixed(2) + '" stroke-dashoffset="' + c.toFixed(2) +
       '" data-offset="' + (c * (1 - st.pct / 100)).toFixed(2) + '" transform="rotate(-90 32 32)"/></svg>' +
-      '<div class="label"><strong>' + st.pct + '%</strong>overall progress' +
+      '<div class="label"><strong>' + st.pct + '%</strong>complete' +
       (st.delayed ? '<br><span style="color:var(--warn)">' + st.delayed + ' job' + (st.delayed > 1 ? 's' : '') + ' delayed</span>' : '') +
       '</div></div></div>' +
       '<div class="jobs-list">' +
-      (jobs.length ? jobs.map((j, i) => PM.renderJob(j, i)).join('') : '<div class="empty" style="margin-top:20px"><h4>Jobs are being prepared</h4><p class="mb-0">Job details for this PO will appear here shortly.</p></div>') +
+      (jobs.length ? jobs.map((j, i) => PM.renderJob(j, i)).join('') : '<div class="empty" style="box-shadow:none;background:var(--fill)"><h4>Jobs are being prepared</h4><p class="mb-0">Job details for this PO will appear here shortly.</p></div>') +
       '</div></div>'
     );
   }
@@ -926,7 +947,7 @@
 
   /* ------------------------------------------------------------------------
      Easter eggs (landing page only) — four hidden CMYK touches
-       1. Click the logo's registration mark 3× quickly → misregistration wobble
+       1. Click the company name 3× quickly → misregistration wobble
        2. Click the CMYK strip in order C → M → Y → K → halftone dot shower
        3. Type "cmyk" anywhere → the headline separates into four plates
        4. Click all four registration marks on the tracking card → "in register"
@@ -957,9 +978,9 @@
   }
 
   function initEasterEggs() {
-    // 1. Registration mark triple-click
+    // 1. Triple-click the company name
     let clicks = [];
-    $('#brand-mark').addEventListener('click', () => {
+    $('#brand-home').addEventListener('click', () => {
       if (!onLanding()) return;
       const now = Date.now();
       clicks = clicks.filter((t) => now - t < 1200);
