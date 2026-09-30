@@ -1,85 +1,387 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>P.M. Offset Printers — Order Tracking</title>
-<link rel="stylesheet" href="/css/styles.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>P.M. Offset Printers — Order Tracking</title>
+  <meta name="description" content="Track your print order with P.M. Offset Printers, Bengaluru.">
+  <meta name="theme-color" content="#8B0000">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='%238B0000' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='7' fill='none' stroke='%238B0000' stroke-width='2'/%3E%3Cpath d='M16 0v32M0 16h32' stroke='%238B0000' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Jost:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body>
 
-<nav>
-  <div class="nav-logo">P.M. OFFSET PRINTERS</div>
-  <div class="nav-right" id="nav-right">
-    <div class="nav-tagline">Order Tracking Portal</div>
-    <button class="nav-btn" onclick="openLoginModal()">Login</button>
-  </div>
-</nav>
-<div class="cmyk-strip"><span></span><span></span><span></span><span></span></div>
+  <!-- ============================== HEADER ============================== -->
+  <header class="site-header">
+    <nav class="nav" aria-label="Main">
+      <button type="button" class="brand" id="brand-home" aria-label="P.M. Offset Printers — home">
+        <span class="brand-mark" id="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="16" cy="16" r="9"/>
+            <circle cx="16" cy="16" r="4.2"/>
+            <path d="M16 2v28M2 16h28"/>
+          </svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">P.M. Offset Printers</span>
+          <span class="brand-sub">Order Tracking · Bengaluru</span>
+        </span>
+      </button>
 
-<main id="app"></main>
+      <div class="nav-actions" id="nav-actions">
+        <!-- Public -->
+        <button type="button" class="btn btn-outline btn-sm" id="btn-staff-login">Staff Login</button>
 
-<!-- LOGIN MODAL -->
-<div class="modal-bg" id="login-modal">
-  <div class="modal-dark">
-    <div class="modal-dark-hdr"><h3>LOGIN</h3><button class="modal-x" onclick="closeLoginModal()">&#x2715;</button></div>
-    <div class="modal-dark-body">
-      <div id="login-msg"></div>
-      <div id="login-form-area">
-        <div class="df"><label>Username</label><input type="text" id="login-user" placeholder="Enter username" autocomplete="username" spellcheck="false"></div>
-        <div class="df"><label>Password</label><input type="password" id="login-pass" placeholder="Enter password" autocomplete="current-password"></div>
-        <button class="btn-submit" onclick="doLogin()">SIGN IN</button>
-        <div class="modal-link"><button onclick="showForgotInModal()">Forgot password?</button></div>
+        <!-- Client signed in -->
+        <div class="nav-user hidden" id="nav-client">
+          <div class="who"><strong id="nav-client-name"></strong><span class="role-pill">Client</span></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-client-logout">Sign Out</button>
+        </div>
+
+        <!-- Staff signed in -->
+        <div class="nav-user hidden" id="nav-staff">
+          <div class="who"><strong id="nav-staff-name"></strong><span class="role-pill" id="nav-staff-role"></span></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="btn-staff-logout">Log Out</button>
+        </div>
       </div>
-      <div id="forgot-form-area" style="display:none">
-        <div id="forgot-step1">
-          <div class="df"><label>Username</label><input type="text" id="forgot-user" placeholder="Enter your username"></div>
-          <button class="btn-submit" onclick="forgotGetQ()">NEXT</button>
+    </nav>
+    <div class="cmyk-strip" id="cmyk-strip" aria-hidden="true">
+      <span class="c" data-ink="Cyan"></span><span class="m" data-ink="Magenta"></span><span class="y" data-ink="Yellow"></span><span class="k" data-ink="Key"></span>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- ============================ BOOT ============================ -->
+    <div id="view-boot" class="loading-block" style="padding:120px 0">
+      <div class="spinner"></div>
+    </div>
+
+    <!-- ========================= FIRST-TIME SETUP ========================= -->
+    <section id="view-setup" class="view hidden">
+      <div class="setup-wrap">
+        <div style="text-align:center">
+          <span class="eyebrow">First-time setup</span>
+          <h1 style="font-size:2.4rem">Create the Head Admin</h1>
+          <div class="rule" style="justify-content:center"><span></span></div>
+          <p class="muted">This account belongs to the Managing Director. It can add team members, assign roles and view the full audit log.</p>
         </div>
-        <div id="forgot-step2" style="display:none">
-          <div class="df"><label>Security Question</label><p id="forgot-q" style="color:#aaa;font-size:13px;padding:6px 0;"></p></div>
-          <div class="df"><label>Your Answer</label><input type="text" id="forgot-ans" placeholder="Enter answer"></div>
-          <div class="df"><label>New Password</label><input type="password" id="forgot-pw" placeholder="New password"></div>
-          <button class="btn-submit" onclick="forgotReset()">RESET PASSWORD</button>
+        <div class="card">
+          <form id="setup-form" novalidate>
+            <div class="form-error hidden" data-error></div>
+            <div class="field">
+              <label for="setup-username">Username <span class="req">*</span></label>
+              <input type="text" id="setup-username" name="username" autocomplete="username" required>
+            </div>
+            <div class="form-grid">
+              <div class="field">
+                <label for="setup-password">Password <span class="req">*</span></label>
+                <input type="password" id="setup-password" name="password" autocomplete="new-password" required minlength="4">
+              </div>
+              <div class="field">
+                <label for="setup-confirm">Confirm Password <span class="req">*</span></label>
+                <input type="password" id="setup-confirm" name="confirm" autocomplete="new-password" required>
+              </div>
+            </div>
+            <div class="field">
+              <label for="setup-question">Security Question</label>
+              <input type="text" id="setup-question" name="security_question" placeholder="e.g. Name of your first school?">
+              <span class="hint">Used to recover your password if you forget it.</span>
+            </div>
+            <div class="field">
+              <label for="setup-answer">Security Answer</label>
+              <input type="text" id="setup-answer" name="security_answer" autocomplete="off">
+            </div>
+            <button type="submit" class="btn btn-block">Create Head Admin</button>
+          </form>
         </div>
-        <div class="modal-link"><button onclick="showLoginInModal()">← Back to Login</button></div>
+      </div>
+    </section>
+
+    <!-- ============================ LANDING ============================ -->
+    <section id="view-landing" class="view hidden">
+      <div class="hero">
+        <div class="hero-inner">
+          <span class="eyebrow">Est. Bengaluru</span>
+          <h1 class="hero-title" id="hero-title">
+            <span class="ink">Track your order</span>
+            <span class="plate pc" aria-hidden="true">Track your order</span>
+            <span class="plate pm" aria-hidden="true">Track your order</span>
+            <span class="plate py" aria-hidden="true">Track your order</span>
+            <span class="plate pk" aria-hidden="true">Track your order</span>
+          </h1>
+          <div class="rule" style="justify-content:center"><span></span></div>
+          <p class="hero-lede">Follow each job from prepress to dispatch, at every stage of the press.</p>
+
+          <div class="track-card" id="track-card">
+            <span class="reg tl" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="10" cy="10" r="5"/><path d="M10 0v20M0 10h20"/></svg></span>
+            <span class="reg tr" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="10" cy="10" r="5"/><path d="M10 0v20M0 10h20"/></svg></span>
+            <span class="reg bl" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="10" cy="10" r="5"/><path d="M10 0v20M0 10h20"/></svg></span>
+            <span class="reg br" aria-hidden="true"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="10" cy="10" r="5"/><path d="M10 0v20M0 10h20"/></svg></span>
+
+            <!-- Option 1: PO number -->
+            <form id="po-search-form" novalidate>
+              <div class="option-title"><span class="num">i.</span><h3>Search by PO Number</h3></div>
+              <p class="option-sub">No login needed. Enter the purchase order number from your confirmation.</p>
+              <div class="form-error hidden" data-error></div>
+              <div class="inline-form">
+                <label for="po-search-input" class="sr-only">PO Number</label>
+                <input type="text" id="po-search-input" class="input-lg upper" placeholder="e.g. PO 2461" autocomplete="off" spellcheck="false" required>
+                <button type="submit" class="btn">Track</button>
+              </div>
+            </form>
+
+            <div class="or-divider"><span id="or-word">or</span></div>
+
+            <!-- Option 2: Client login -->
+            <form id="client-login-form" novalidate>
+              <div class="option-title"><span class="num">ii.</span><h3>Client Login</h3></div>
+              <p class="option-sub">See every active order for your company in one place.</p>
+              <div class="form-error hidden" data-error></div>
+              <div class="form-grid">
+                <div class="field">
+                  <label for="client-code">Client Code</label>
+                  <input type="text" id="client-code" class="upper" placeholder="e.g. TATA" autocomplete="username" spellcheck="false" maxlength="7" required>
+                </div>
+                <div class="field">
+                  <label for="client-password">Password</label>
+                  <input type="password" id="client-password" autocomplete="current-password" required>
+                </div>
+              </div>
+              <button type="submit" class="btn btn-dark btn-block">View My Orders</button>
+            </form>
+          </div>
+
+          <p class="hero-foot">Can't find your order? Please contact your P.M. Offset Printers representative.</p>
+        </div>
+      </div>
+
+      <div class="features">
+        <div class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 12h16M4 6h16M4 18h10"/></svg></div>
+          <h4>Six-stage pipeline</h4>
+          <p>From order receipt to dispatch, every job shows exactly where it stands.</p>
+        </div>
+        <div class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg></div>
+          <h4>Timed in IST</h4>
+          <p>Every update is stamped in Indian Standard Time.</p>
+        </div>
+        <div class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 3h12v18l-6-4-6 4z"/></svg></div>
+          <h4>Full specifications</h4>
+          <p>GSM, finish, process and embellishments for every job on your PO.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================= PUBLIC PO RESULT ========================= -->
+    <section id="view-track" class="view hidden">
+      <div class="container section">
+        <button type="button" class="back-link" data-go="landing">← New search</button>
+        <div id="track-result"></div>
+      </div>
+    </section>
+
+    <!-- ========================= CLIENT DASHBOARD ========================= -->
+    <section id="view-client" class="view hidden">
+      <div class="client-banner">
+        <div class="container">
+          <div>
+            <span class="eyebrow">Client Dashboard</span>
+            <h2 id="client-company"></h2>
+            <div style="margin-top:8px"><span class="code-chip" id="client-code-chip"></span></div>
+          </div>
+          <div class="client-stats" id="client-stats"></div>
+        </div>
+      </div>
+      <div class="container section" style="padding-top:28px">
+        <div class="toolbar" id="client-toolbar">
+          <div class="field grow">
+            <label for="cf-search">Search</label>
+            <input type="search" id="cf-search" placeholder="PO number, job name…">
+          </div>
+          <div class="field">
+            <label for="cf-stage">Stage</label>
+            <select id="cf-stage"></select>
+          </div>
+          <div class="field">
+            <label for="cf-status">Status</label>
+            <select id="cf-status">
+              <option value="">All</option>
+              <option value="ontrack">On track</option>
+              <option value="delayed">Delayed</option>
+              <option value="ready">Ready / Shipped</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="cf-sort">Sort</label>
+            <select id="cf-sort">
+              <option value="newest">Newest first</option>
+              <option value="oldest">Oldest first</option>
+              <option value="delivery">Delivery date</option>
+              <option value="po">PO number</option>
+            </select>
+          </div>
+          <div class="tb-actions">
+            <button type="button" class="btn btn-ghost btn-sm" id="client-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="result-count" id="client-count"></p>
+        <div id="client-pos"></div>
+      </div>
+    </section>
+
+    <!-- ========================== ADMIN DASHBOARD ========================== -->
+    <section id="view-admin" class="view hidden">
+      <div class="admin-head">
+        <div class="container">
+          <span class="eyebrow">Staff Dashboard</span>
+          <h2 id="admin-greeting">Good day</h2>
+          <nav class="tabs" id="admin-tabs" role="tablist">
+            <button type="button" class="tab active" data-tab="orders" role="tab">Orders<span class="count" id="count-orders"></span></button>
+            <button type="button" class="tab" data-tab="archive" role="tab">Archive<span class="count" id="count-archive"></span></button>
+            <button type="button" class="tab" data-tab="clients" role="tab">Manage Clients<span class="count" id="count-clients"></span></button>
+            <button type="button" class="tab hidden" data-tab="team" data-role="head_admin" role="tab">Manage Team</button>
+            <button type="button" class="tab hidden" data-tab="audit" data-role="head_admin" role="tab">Audit Log</button>
+          </nav>
+        </div>
+      </div>
+      <div class="admin-body">
+        <div class="container">
+          <div id="tab-orders" class="tab-panel"></div>
+          <div id="tab-archive" class="tab-panel hidden"></div>
+          <div id="tab-clients" class="tab-panel hidden"></div>
+          <div id="tab-team" class="tab-panel hidden"></div>
+          <div id="tab-audit" class="tab-panel hidden"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============================== FOOTER ============================== -->
+  <footer class="site-footer">
+    <div class="cmyk-strip" aria-hidden="true"><span class="c"></span><span class="m"></span><span class="y"></span><span class="k"></span></div>
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <span class="brand-name">P.M. Offset Printers</span>
+        <p>Offset printing, packaging and finishing for brands that care about the details, from prepress to press to post-press.</p>
+      </div>
+      <div>
+        <h5>Visit</h5>
+        <ul>
+          <!-- Add your full street address here -->
+          <li>Bengaluru, Karnataka</li>
+          <li>India</li>
+        </ul>
+      </div>
+      <div>
+        <h5>Services</h5>
+        <ul>
+          <li>Offset Printing</li>
+          <li>Packaging &amp; Cartons</li>
+          <li>Foiling &amp; Lamination</li>
+          <li>Post-Press Finishing</li>
+        </ul>
+        <!-- Add phone / email here, e.g.
+        <h5 style="margin-top:18px">Contact</h5>
+        <ul><li><a href="tel:+91XXXXXXXXXX">+91 XXXXX XXXXX</a></li><li><a href="mailto:hello@trackpmop.com">hello@trackpmop.com</a></li></ul>
+        -->
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© <span id="footer-year"></span> P.M. Offset Printers. All rights reserved.</span>
+      <span>All times shown in IST (UTC+5:30)</span>
+    </div>
+  </footer>
+
+  <!-- ============================ STAFF LOGIN MODAL ============================ -->
+  <div class="modal-backdrop hidden" id="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="modal">
+      <button type="button" class="icon-btn modal-close" data-close aria-label="Close">×</button>
+
+      <!-- Step: login -->
+      <div data-step="login">
+        <div class="modal-head">
+          <span class="eyebrow">Staff Only</span>
+          <h3 id="login-title">Staff Login</h3>
+        </div>
+        <form class="modal-body" id="staff-login-form" novalidate>
+          <div class="form-error hidden" data-error></div>
+          <div class="field">
+            <label for="login-username">Username</label>
+            <input type="text" id="login-username" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label for="login-password">Password</label>
+            <input type="password" id="login-password" autocomplete="current-password" required>
+          </div>
+          <button type="submit" class="btn btn-block">Log In</button>
+          <p style="text-align:center;margin:16px 0 0"><button type="button" class="link-btn muted" data-step-go="forgot">Forgot password?</button></p>
+        </form>
+      </div>
+
+      <!-- Step: forgot (username) -->
+      <div data-step="forgot" class="hidden">
+        <div class="modal-head">
+          <span class="eyebrow">Password Recovery</span>
+          <h3>Forgot Password</h3>
+          <p>Enter your username to see your security question.</p>
+        </div>
+        <form class="modal-body" id="forgot-form" novalidate>
+          <div class="form-error hidden" data-error></div>
+          <div class="field">
+            <label for="forgot-username">Username</label>
+            <input type="text" id="forgot-username" autocomplete="username" required>
+          </div>
+          <button type="submit" class="btn btn-block">Continue</button>
+          <p style="text-align:center;margin:16px 0 0"><button type="button" class="link-btn muted" data-step-go="login">← Back to login</button></p>
+        </form>
+      </div>
+
+      <!-- Step: reset -->
+      <div data-step="reset" class="hidden">
+        <div class="modal-head">
+          <span class="eyebrow">Password Recovery</span>
+          <h3>Reset Password</h3>
+        </div>
+        <form class="modal-body" id="reset-form" novalidate>
+          <div class="form-error hidden" data-error></div>
+          <div class="field">
+            <label>Security Question</label>
+            <p id="reset-question" style="font-family:var(--f-head);font-size:1.25rem;margin:0;font-style:italic"></p>
+          </div>
+          <div class="field">
+            <label for="reset-answer">Your Answer</label>
+            <input type="text" id="reset-answer" autocomplete="off" required>
+          </div>
+          <div class="form-grid">
+            <div class="field">
+              <label for="reset-new">New Password</label>
+              <input type="password" id="reset-new" autocomplete="new-password" required>
+            </div>
+            <div class="field">
+              <label for="reset-confirm">Confirm</label>
+              <input type="password" id="reset-confirm" autocomplete="new-password" required>
+            </div>
+          </div>
+          <button type="submit" class="btn btn-block">Reset Password</button>
+          <p style="text-align:center;margin:16px 0 0"><button type="button" class="link-btn muted" data-step-go="login">← Back to login</button></p>
+        </form>
       </div>
     </div>
   </div>
-</div>
 
-<!-- GENERAL MODAL -->
-<div class="modal-bg" id="gen-modal"><div class="modal-light" id="gen-modal-box"></div></div>
+  <!-- Generic modal mount (forms, confirmations) -->
+  <div id="modal-root"></div>
 
-<!-- TOAST -->
-<div class="toast" id="toast"></div>
+  <!-- Toasts -->
+  <div class="toasts" id="toasts" aria-live="polite"></div>
 
-<footer>
-  <div class="ft-brand">
-    <div class="ft-name">P.M. OFFSET PRINTERS</div>
-    <div class="ft-tagline">"Communication is the key.<br>Printing is its media."</div>
-    <div class="ft-est">EST. 1999 · INDIA</div>
-  </div>
-  <div class="ft-col">
-    <div class="ft-title">CONTACT US</div>
-    <p><strong>Phone / WhatsApp</strong></p>
-    <a href="tel:+919620956044">+91 96209 56044</a>
-    <a href="https://wa.me/919620956044" target="_blank">WhatsApp →</a>
-    <br><p><strong>Email</strong></p>
-    <a href="mailto:planning@pmoffsetprinters.com">planning@pmoffsetprinters.com</a>
-  </div>
-  <div class="ft-col">
-    <div class="ft-title">ORDER SUPPORT</div>
-    <p>For order queries, have your <strong>Order ID</strong> ready.</p>
-    <br><p>Mon – Sat <strong style="color:#bbb">9:00am – 6:00pm IST</strong></p>
-  </div>
-</footer>
-<div class="ft-bottom">
-  <span>© 2026 P.M. Offset Printers</span>
-  <div class="cmyk-dots"><span></span><span></span><span></span><span></span></div>
-</div>
-
-<script src="/js/app.js"></script>
-<script src="/js/app2.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/app2.js"></script>
 </body>
 </html>

@@ -15,7 +15,7 @@ router.post('/login', (req, res) => {
   }
 
   req.session.user = { id: user.id, username: user.username, role: user.role };
-  res.json({ message: 'Login successful.', user: { username: user.username, role: user.role } });
+  res.json({ message: 'Login successful.', user: { id: user.id, username: user.username, role: user.role } });
 });
 
 router.post('/logout', (req, res) => {
@@ -24,8 +24,24 @@ router.post('/logout', (req, res) => {
 });
 
 router.get('/me', (req, res) => {
-  if (req.session && req.session.user) return res.json({ user: req.session.user });
+  if (req.session && req.session.user) {
+    // Refresh from the database so role changes / removals take effect
+    const u = dbGet('SELECT id, username, role FROM users WHERE id = ?', [req.session.user.id]);
+    if (!u) { req.session.destroy(() => {}); return res.json({ user: null }); }
+    req.session.user = { id: u.id, username: u.username, role: u.role };
+    return res.json({ user: req.session.user });
+  }
   res.json({ user: null });
+});
+
+// Client login check (client code + password). The dashboard itself is POST /api/clients/dashboard.
+router.post('/client-login', (req, res) => {
+  const code = String(req.body.client_code || req.body.code || '').trim().toUpperCase().replace(/\s+/g, '');
+  const password = String(req.body.password || '');
+  if (!code || !password) return res.status(400).json({ error: 'Client code and password are required.' });
+  const client = dbGet('SELECT id, client_code, company_name, password FROM clients WHERE client_code = ?', [code]);
+  if (!client || !bcrypt.compareSync(password, client.password)) return res.status(401).json({ error: 'Incorrect client code or password.' });
+  res.json({ client: { client_code: client.client_code, company_name: client.company_name } });
 });
 
 router.post('/forgot-password/question', (req, res) => {

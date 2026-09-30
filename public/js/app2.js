@@ -1,168 +1,1322 @@
-/* P.M. OFFSET PRINTERS — Frontend Part 2 */
+/* ==========================================================================
+   P.M. Offset Printers — Order Tracking
+   app2.js — Staff / Admin dashboard
+   Tabs: Orders · Archive · Manage Clients · Manage Team (MD) · Audit Log (MD)
+   Depends on window.PM from app.js
+   ========================================================================== */
+(function () {
+  'use strict';
 
-/* CREATE/EDIT ORDER */
-function showCreateOrder(ex){
-  var e=!!ex,o=ex||{};
-  var ep=o.process?o.process.split(', ').filter(Boolean):[];
-  var ef=o.finish_type?o.finish_type.split(', ').filter(Boolean):[];
-  var known=['Matte','Glossy','Satin','Uncoated','Laminated','Varnished'];
-  var cf='';var sf=[];
-  ef.forEach(function(f){if(known.indexOf(f)!==-1)sf.push(f);else cf=f});
+  const PM = window.PM;
+  const { $, $$, esc, api } = PM;
 
-  var fHtml=known.map(function(f){var c=sf.indexOf(f)!==-1;return '<label class="'+(c?'ck':'')+'"><input type="checkbox" value="'+f+'"'+(c?' checked':'')+' onchange="this.parentElement.classList.toggle(\'ck\',this.checked)">'+f+'</label>'}).join('')+
-    '<label class="'+(cf?'ck':'')+'"><input type="checkbox" value="__other__"'+(cf?' checked':'')+' onchange="togFinOth(this)">Other</label>';
+  const A = {
+    bound: false,
+    tab: 'orders',
+    pos: [],
+    archived: [],
+    clients: [],
+    team: [],
+    logs: [],
+    open: new Set(),
+    filters: { q: '', stage: '', status: '', from: '', to: '', sort: 'newest' },
+    archiveQ: '',
+    clientQ: '',
+    auditF: { q: '', action: '', mdOnly: false }
+  };
 
-  var gv=o.gsm||'',cg=gv&&GSM_OPTIONS.indexOf(gv)===-1&&gv!=='Other',gsv=cg?'Other':gv;
-  var gOpts=GSM_OPTIONS.map(function(g){return '<option value="'+g+'"'+(gsv===g?' selected':'')+'>'+g+'</option>'}).join('');
-  var pHtml=PROCESS_OPTIONS.map(function(p){var c=ep.indexOf(p)!==-1;return '<label class="'+(c?'ck':'')+'"><input type="checkbox" value="'+p+'"'+(c?' checked':'')+' onchange="this.parentElement.classList.toggle(\'ck\',this.checked)">'+p+'</label>'}).join('');
+  const role = () => (PM.state.user && PM.state.user.role) || 'staff';
+  const isHead = () => role() === 'head_admin';
+  const canChangeClientPw = () => role() === 'head_admin' || role() === 'planning';
+  const keyOf = (po) => String(po.id != null ? po.id : po.number);
 
-  openModal(
-    '<div class="gm-hdr"><h3>'+(e?'Edit Order':'New Order')+'</h3><button class="gm-x" onclick="closeModal()">×</button></div>'+
-    '<div class="gm-body"><div id="of-msg"></div>'+
-    '<div class="form-sec">Order Information</div>'+
-    '<div class="form-row"><div class="fw"><label>Order ID *</label><input type="text" id="f-oid" value="'+esc(o.order_id||'')+'"'+(e?' disabled style="background:var(--sf);color:var(--tl);"':'')+'></div>'+
-    '<div class="fw"><label>Customer Name *</label><input type="text" id="f-cust" value="'+esc(o.customer_name||'')+'"></div></div>'+
-    '<div class="form-row"><div class="fw"><label>Job Type *</label><input type="text" id="f-job" value="'+esc(o.job_type||'')+'"></div>'+
-    '<div class="fw"><label>Quantity & Specs</label><input type="text" id="f-qty" value="'+esc(o.quantity_specs||'')+'"></div></div>'+
-    '<div class="form-row"><div class="fw"><label>Date of Order *</label><input type="date" id="f-doo" value="'+(o.date_of_order||new Date().toISOString().split('T')[0])+'"></div>'+
-    '<div class="fw"><label>Est. Delivery</label><input type="date" id="f-del" value="'+(o.estimated_delivery||'')+'"></div></div>'+
-    '<div class="fw"><label>Finish Type (select multiple)</label><div class="cbg" id="f-fin">'+fHtml+'</div>'+
-      '<div class="other-in'+(cf?' vis':'')+'" id="fin-oth-w"><input type="text" id="f-fin-oth" placeholder="Type custom finish..." value="'+esc(cf)+'"></div></div>'+
-    '<div class="form-sec">Specifications</div>'+
-    '<div class="form-row"><div class="fw"><label>GSM</label><select id="f-gsm" onchange="togGsmOth()"><option value="">Select...</option>'+gOpts+'</select>'+
-      '<div class="other-in'+((cg||gsv==='Other')?' vis':'')+'" id="gsm-oth-w"><input type="text" id="f-gsm-oth" placeholder="Type custom GSM..." value="'+(cg?esc(gv):'')+'"></div></div>'+
-    '<div class="fw"><label>&nbsp;</label></div></div>'+
-    '<div class="fw"><label>Process</label><div class="cbg" id="f-proc">'+pHtml+'</div></div>'+
-    '<div class="fchk"><input type="checkbox" id="f-emb"'+(o.embellishments?' checked':'')+'><label for="f-emb">Embellishments</label></div>'+
-    '<div class="fchk"><input type="checkbox" id="f-cc"'+(o.cast_and_cure?' checked':'')+'><label for="f-cc">Cast and Cure</label></div>'+
-    '<div class="fw"><label>Other Specifications</label><textarea id="f-ospec">'+esc(o.other_specifications||'')+'</textarea></div>'+
-    '<div class="form-acts"><button class="btn-s" onclick="closeModal()">Cancel</button>'+
-      '<button class="btn-p" onclick="'+(e?"submitEdit('"+esc(o.order_id)+"')":"confirmCreate()")+'">'+
-      (e?'Save Changes':'Review Order')+'</button></div></div>'
-  );
-}
+  /* ------------------------------------------------------------------------
+     Error handling — bounce to login when the session has expired
+     ------------------------------------------------------------------------ */
+  function fail(err) {
+    if (err && err.status === 401) {
+      PM.toast('Your session has expired. Please log in again.', 'error');
+      PM.state.user = null;
+      reset();
+      PM.showView('landing');
+      PM.openLogin('login');
+      return;
+    }
+    PM.toast((err && err.message) || 'Something went wrong.', 'error');
+  }
 
-function togFinOth(cb){cb.parentElement.classList.toggle('ck',cb.checked);var w=$('fin-oth-w');if(cb.checked)w.classList.add('vis');else{w.classList.remove('vis');$('f-fin-oth').value=''}}
-function togGsmOth(){var v=$('f-gsm').value,w=$('gsm-oth-w');if(v==='Other')w.classList.add('vis');else{w.classList.remove('vis');$('f-gsm-oth').value=''}}
+  function idFrom(data) {
+    if (!data) return null;
+    const cands = [data.id, data.po_id, data.poId, data.insertId, data.lastInsertRowid,
+      data.po && data.po.id, data.purchase_order && data.purchase_order.id, data.job && data.job.id, data.jobId, data.job_id];
+    for (const c of cands) if (c !== undefined && c !== null) return c;
+    return null;
+  }
 
-function getFormData(){
-  var pr=[];document.querySelectorAll('#f-proc input:checked').forEach(function(c){pr.push(c.value)});
-  var fin=[];document.querySelectorAll('#f-fin input:checked').forEach(function(c){if(c.value==='__other__'){var v=$('f-fin-oth').value.trim();if(v)fin.push(v)}else fin.push(c.value)});
-  var gsm=$('f-gsm').value;if(gsm==='Other'){var v=$('f-gsm-oth').value.trim();gsm=v||'Other'}
-  return{order_id:$('f-oid').value.trim(),customer_name:$('f-cust').value.trim(),job_type:$('f-job').value.trim(),quantity_specs:$('f-qty').value.trim(),date_of_order:$('f-doo').value,estimated_delivery:$('f-del').value,finish_type:fin.join(', '),gsm:gsm,process:pr,embellishments:$('f-emb').checked,cast_and_cure:$('f-cc').checked,other_specifications:$('f-ospec').value.trim()};
-}
+  /* ------------------------------------------------------------------------
+     Enter / reset / tabs
+     ------------------------------------------------------------------------ */
+  function enter() {
+    PM.showView('admin');
+    const u = PM.state.user || {};
+    const hr = parseInt(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: 'numeric', hour12: false }).format(new Date()), 10);
+    const greet = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+    $('#admin-greeting').textContent = greet + (u.username ? ', ' + u.username : '');
+    $$('#admin-tabs [data-role]').forEach((t) => t.classList.toggle('hidden', role() !== t.getAttribute('data-role')));
+    if (!A.bound) bindOnce();
+    if ((A.tab === 'team' || A.tab === 'audit') && !isHead()) A.tab = 'orders';
+    switchTab(A.tab, true);
+    loadClients(true);
+    loadOrders();
+  }
 
-function confirmCreate(){
-  var d=getFormData();if(!d.order_id||!d.customer_name||!d.job_type||!d.date_of_order){$('of-msg').innerHTML='<div class="msg-err">Fill in required fields (*).</div>';return}
-  window._po=d;
-  openModal('<div class="gm-hdr"><h3>Confirm Order</h3><button class="gm-x" onclick="closeModal()">×</button></div><div class="gm-body">'+
-    '<p style="margin-bottom:20px;color:var(--tl);font-size:12px;">Review before saving:</p>'+
-    '<div class="lo-panel" style="border:1px solid var(--bd);padding:20px;">'+
-      '<div class="sp"><span class="sp-k">Order ID</span><span class="sp-v">'+esc(d.order_id)+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Customer</span><span class="sp-v">'+esc(d.customer_name)+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Job Type</span><span class="sp-v">'+esc(d.job_type)+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Quantity</span><span class="sp-v">'+esc(d.quantity_specs||'—')+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Order Date</span><span class="sp-v">'+fmtD(d.date_of_order)+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Est. Delivery</span><span class="sp-v">'+fmtD(d.estimated_delivery)+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Finish</span><span class="sp-v">'+esc(d.finish_type||'—')+'</span></div>'+
-      '<div class="sp"><span class="sp-k">GSM</span><span class="sp-v">'+esc(d.gsm||'—')+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Process</span><span class="sp-v">'+esc(d.process.length?d.process.join(', '):'—')+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Embellishments</span><span class="sp-v">'+(d.embellishments?'Yes':'No')+'</span></div>'+
-      '<div class="sp"><span class="sp-k">Cast & Cure</span><span class="sp-v">'+(d.cast_and_cure?'Yes':'No')+'</span></div>'+
-      (d.other_specifications?'<div class="sp"><span class="sp-k">Other</span><span class="sp-v">'+esc(d.other_specifications)+'</span></div>':'')+
-    '</div><div class="form-acts" style="margin-top:24px;"><button class="btn-s" onclick="showCreateOrder()">← Edit</button><button class="btn-g" onclick="submitCreate()">✓ Confirm</button></div></div>');
-}
-async function submitCreate(){try{await api('/api/orders',{method:'POST',body:window._po});closeModal();toast('Order created!');await loadOrders()}catch(e){toast(e.message,'err')}}
-async function submitEdit(id){var d=getFormData();try{await api('/api/orders/'+encodeURIComponent(id),{method:'PUT',body:d});closeModal();toast('Order updated!');await loadOrders()}catch(e){if($('of-msg'))$('of-msg').innerHTML='<div class="msg-err">'+esc(e.message)+'</div>'}}
+  function reset() {
+    A.pos = []; A.archived = []; A.clients = []; A.team = []; A.logs = [];
+    A.open.clear();
+    A.tab = 'orders';
+    $$('.tab-panel').forEach((p) => (p.innerHTML = ''));
+  }
 
-/* ORDER DETAIL */
-async function showDetail(id){
-  try{
-    var data=await api('/api/orders/track/'+encodeURIComponent(id)),o=data.order,notes=data.notes,isH=currentUser.role==='head_admin';
-    window._detO=o;
-    var sb=STAGES.map(function(s){return '<button class="stg-btn'+(o.current_stage===s.n?' on':'')+'" onclick="updStage(\''+esc(o.order_id)+'\','+s.n+')">'+s.n+'. '+s.name+'</button>'}).join('');
-    var dh=o.is_delayed?
-      '<div class="delay-bar" style="border:1px solid #e8d590;margin-bottom:12px;">⚠️ Delayed: '+esc(o.delay_reason||'No reason')+'</div><button class="btn-g btn-sm" onclick="rmDelay(\''+esc(o.order_id)+'\')">Remove Delay</button>'
-      :'<div style="display:flex;gap:8px;align-items:end"><div class="fw" style="flex:1;margin-bottom:0"><label>Delay Reason</label><input type="text" id="del-reas" placeholder="e.g. Waiting for materials"></div><button class="btn-p btn-sm" style="background:var(--am)" onclick="setDelay(\''+esc(o.order_id)+'\')">Mark Delayed</button></div>';
-    var nh=notes.length?notes.map(function(n){
-      var db=isH?'<button class="ib" style="width:24px;height:24px;font-size:11px;" onclick="delNote('+n.id+',\''+esc(o.order_id)+'\')">🗑️</button>':'';
-      return '<div class="log-row"><div class="log-ts">'+esc(n.author)+'<br>'+fmtDT(n.created_at)+'</div><div class="log-txt" style="display:flex;justify-content:space-between;align-items:start">'+esc(n.note)+db+'</div></div>';
-    }).join(''):'<p style="color:var(--tl);font-size:12px;">No notes yet.</p>';
+  function switchTab(tab, silent) {
+    A.tab = tab;
+    $$('#admin-tabs .tab').forEach((t) => t.classList.toggle('active', t.getAttribute('data-tab') === tab));
+    $$('.tab-panel').forEach((p) => p.classList.toggle('hidden', p.id !== 'tab-' + tab));
+    if (tab === 'orders') renderOrdersShell();
+    if (tab === 'archive') { renderArchiveShell(); loadArchive(); }
+    if (tab === 'clients') { renderClientsShell(); loadClients(); }
+    if (tab === 'team') { renderTeamShell(); loadTeam(); }
+    if (tab === 'audit') { renderAuditShell(); loadAudit(); }
+    if (!silent) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
-    openModal('<div class="gm-hdr"><h3>Order: '+esc(o.order_id)+'</h3><button class="gm-x" onclick="closeModal()">×</button></div><div class="gm-body">'+
-      '<div class="form-sec">Update Stage</div><div class="stg-btns">'+sb+'</div>'+
-      '<div class="form-sec">Delay Status</div><div style="margin-bottom:16px;">'+dh+'</div>'+
-      '<div class="form-sec">Order Details</div>'+
-      '<div class="lo-panel" style="border:1px solid var(--bd);padding:16px;margin-bottom:12px;">'+
-        '<div class="sp"><span class="sp-k">Customer</span><span class="sp-v">'+esc(o.customer_name)+'</span></div>'+
-        '<div class="sp"><span class="sp-k">Job</span><span class="sp-v">'+esc(o.job_type)+'</span></div>'+
-        '<div class="sp"><span class="sp-k">Quantity</span><span class="sp-v">'+esc(o.quantity_specs||'—')+'</span></div>'+
-        '<div class="sp"><span class="sp-k">Delivery</span><span class="sp-v">'+fmtD(o.estimated_delivery)+'</span></div>'+
-        '<div class="sp"><span class="sp-k">Finish</span><span class="sp-v">'+esc(o.finish_type||'—')+'</span></div>'+
-        '<div class="sp"><span class="sp-k">GSM</span><span class="sp-v">'+esc(o.gsm||'—')+'</span></div>'+
-        '<div class="sp"><span class="sp-k">Process</span><span class="sp-v">'+esc(o.process||'—')+'</span></div>'+
-      '</div><button class="btn-s btn-sm" onclick="closeModal();showCreateOrder(window._detO)">Edit Details</button>'+
-      '<div class="form-sec">Notes</div>'+
-      '<div style="display:flex;gap:8px;margin-bottom:16px;"><input type="text" id="note-in" placeholder="Add a note..." style="flex:1;background:#fff;border:1px solid var(--bd);padding:10px 14px;font-family:DM Mono,monospace;font-size:12px;outline:0;" onkeydown="if(event.key===\'Enter\')addNote(\''+esc(o.order_id)+'\')"><button class="btn-p btn-sm" onclick="addNote(\''+esc(o.order_id)+'\')">Add</button></div>'+nh+
-    '</div>');
-  }catch(e){toast(e.message,'err')}
-}
-async function updStage(id,s){try{await api('/api/orders/'+encodeURIComponent(id)+'/stage',{method:'POST',body:{stage:s}});toast('Stage updated!');showDetail(id);loadOrders()}catch(e){toast(e.message,'err')}}
-async function setDelay(id){var r=$('del-reas')?$('del-reas').value:'';try{await api('/api/orders/'+encodeURIComponent(id)+'/delay',{method:'POST',body:{is_delayed:true,delay_reason:r}});toast('Delayed.');showDetail(id);loadOrders()}catch(e){toast(e.message,'err')}}
-async function rmDelay(id){try{await api('/api/orders/'+encodeURIComponent(id)+'/delay',{method:'POST',body:{is_delayed:false,delay_reason:''}});toast('Delay removed.');showDetail(id);loadOrders()}catch(e){toast(e.message,'err')}}
-async function addNote(id){var n=$('note-in')?$('note-in').value.trim():'';if(!n)return;try{await api('/api/orders/'+encodeURIComponent(id)+'/notes',{method:'POST',body:{note:n}});toast('Note added.');showDetail(id)}catch(e){toast(e.message,'err')}}
-async function delNote(nid,oid){try{await api('/api/orders/notes/'+nid,{method:'DELETE'});toast('Deleted.');showDetail(oid)}catch(e){toast(e.message,'err')}}
+  function setCount(id, n) {
+    const el = $('#count-' + id);
+    if (el) el.textContent = n ? String(n) : '';
+  }
 
-/* DELETE ORDER */
-function confirmDel(id,name){
-  openModal('<div class="gm-body" style="text-align:center;padding:48px;"><div style="font-size:3rem;margin-bottom:16px;">⚠️</div>'+
-    '<h3 style="font-family:Rajdhani,sans-serif;font-size:20px;margin-bottom:8px;">Delete Order?</h3>'+
-    '<p style="color:var(--tm);margin-bottom:24px;">Delete <strong>'+esc(id)+'</strong> for <strong>'+esc(name)+'</strong>? This cannot be undone.</p>'+
-    '<div style="display:flex;gap:12px;justify-content:center;"><button class="btn-s" onclick="closeModal()">Cancel</button><button class="btn-d" onclick="doDel(\''+esc(id)+'\')">Delete</button></div></div>');
-}
-async function doDel(id){try{await api('/api/orders/'+encodeURIComponent(id),{method:'DELETE'});closeModal();toast('Deleted.');await loadOrders()}catch(e){toast(e.message,'err')}}
+  /* ========================================================================
+     ORDERS
+     ======================================================================== */
+  function renderOrdersShell() {
+    const el = $('#tab-orders');
+    if (el.dataset.ready) { renderOrdersList(); return; }
+    el.dataset.ready = '1';
+    const f = A.filters;
+    el.innerHTML =
+      '<div class="stat-row" id="order-stats"></div>' +
+      '<div class="toolbar">' +
+      '<div class="field grow"><label for="of-q">Search</label><input type="search" id="of-q" placeholder="PO number, customer, client code, job…" value="' + esc(f.q) + '"></div>' +
+      '<div class="field"><label for="of-stage">Stage</label><select id="of-stage">' + PM.stageOptions('All stages') + '</select></div>' +
+      '<div class="field"><label for="of-status">Status</label><select id="of-status">' +
+      '<option value="">All</option><option value="inprogress">In progress</option><option value="delayed">Delayed</option>' +
+      '<option value="ontrack">On track</option><option value="ready">Ready / Shipped</option></select></div>' +
+      '<div class="field"><label for="of-from">Ordered from</label><input type="date" id="of-from" value="' + esc(f.from) + '"></div>' +
+      '<div class="field"><label for="of-to">Ordered to</label><input type="date" id="of-to" value="' + esc(f.to) + '"></div>' +
+      '<div class="field"><label for="of-sort">Sort</label><select id="of-sort">' +
+      '<option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="delivery">Delivery date</option>' +
+      '<option value="updated">Recently updated</option><option value="po">PO number</option></select></div>' +
+      '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" data-po-action="refresh">Refresh</button>' +
+      '<button type="button" class="btn btn-sm" data-po-action="new">+ New PO</button></div>' +
+      '</div>' +
+      '<p class="result-count" id="orders-count"></p>' +
+      '<div id="orders-list">' + PM.loadingHTML('Loading orders…') + '</div>';
 
-/* TEAM */
-async function loadTeam(){
-  $('tab-c').innerHTML='<div class="spin-w"><div class="spin"></div></div>';
-  try{
-    var d=await api('/api/admin/team');
-    $('tab-c').innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;"><div style="font-family:Rajdhani,sans-serif;font-size:20px;font-weight:700;">Team Members</div><button class="btn-p btn-sm" onclick="showAddUser()">+ Add Member</button></div>'+
-      d.users.map(function(u){
-        var init=u.username.substring(0,2).toUpperCase(),role=u.role==='head_admin'?'👑 Head Admin':'Staff';
-        var btns=u.role!=='head_admin'?'<button class="btn-s btn-sm" onclick="showResetPw('+u.id+',\''+esc(u.username)+'\')">Reset PW</button><button class="btn-d btn-sm" onclick="confirmDelUser('+u.id+',\''+esc(u.username)+'\')">Remove</button>':'';
-        return '<div class="tc"><div class="tc-info"><div class="tc-av">'+init+'</div><div><div class="tc-name">'+esc(u.username)+'</div><div class="tc-role">'+role+'</div></div></div><div class="tc-acts">'+btns+'</div></div>';
+    $('#of-stage').value = f.stage;
+    $('#of-status').value = f.status;
+    $('#of-sort').value = f.sort;
+    $('#of-q').addEventListener('input', PM.debounce((e) => { f.q = e.target.value; renderOrdersList(); }, 150));
+    [['of-stage', 'stage'], ['of-status', 'status'], ['of-from', 'from'], ['of-to', 'to'], ['of-sort', 'sort']].forEach(([id, k]) => {
+      $('#' + id).addEventListener('change', (e) => { f[k] = e.target.value; renderOrdersList(); });
+    });
+
+    PM.bindAccordion($('#orders-list'), A.open, (card, key, detail) => {
+      const po = A.pos.find((p) => keyOf(p) === key);
+      if (!po) return;
+      detail.innerHTML = po.jobs ? poDetailHTML(po) : PM.loadingHTML('Loading jobs…');
+      refreshPO(po.id, { quiet: true });
+    });
+  }
+
+  async function loadOrders() {
+    try {
+      const data = await api.get('/api/po');
+      const all = PM.pickArray(data, ['pos', 'purchase_orders', 'orders', 'items']).map(PM.normPO);
+      A.pos = all.filter((p) => !p.archived);
+      if (Array.isArray(data.archived)) { A.archived = data.archived.map(PM.normPO); setCount('archive', A.archived.length); }
+      setCount('orders', A.pos.length);
+      renderOrdersList();
+    } catch (err) {
+      const list = $('#orders-list');
+      if (list) list.innerHTML = PM.emptyHTML('Could not load orders', err.message);
+      if (err.status === 401) fail(err);
+    }
+  }
+
+  function renderOrderStats() {
+    const el = $('#order-stats');
+    if (!el) return;
+    let jobs = 0, delayed = 0, ready = 0;
+    A.pos.forEach((p) => {
+      const s = PM.poStats(p);
+      jobs += p.jobs ? s.total : p.jobCount;
+      delayed += s.delayed;
+      ready += s.ready;
+    });
+    el.innerHTML =
+      '<div class="stat-card"><strong>' + A.pos.length + '</strong><span>Active POs</span></div>' +
+      '<div class="stat-card"><strong>' + jobs + '</strong><span>Jobs</span></div>' +
+      '<div class="stat-card"><strong>' + delayed + '</strong><span>Delayed</span></div>' +
+      '<div class="stat-card"><strong>' + ready + '</strong><span>Ready / Shipped</span></div>';
+  }
+
+  function renderOrdersList() {
+    const list = $('#orders-list');
+    if (!list) return;
+    renderOrderStats();
+    const pos = PM.filterPOs(A.pos, A.filters);
+    $('#orders-count').textContent = A.pos.length ? 'Showing ' + pos.length + ' of ' + A.pos.length + ' active purchase orders' : '';
+    if (!A.pos.length) {
+      list.innerHTML = '<div class="empty"><h4>No active orders</h4><p>Create your first purchase order to get started.</p>' +
+        '<button type="button" class="btn btn-sm" data-po-action="new">+ New PO</button></div>';
+      return;
+    }
+    if (!pos.length) { list.innerHTML = PM.emptyHTML('No matching orders', 'Try adjusting your search or filters.'); return; }
+    list.innerHTML = pos.map(poCardHTML).join('');
+  }
+
+  function poCardHTML(po) {
+    const open = A.open.has(keyOf(po));
+    return '<div class="po-card' + (open ? ' open' : '') + '" data-key="' + esc(keyOf(po)) + '" data-po-id="' + esc(po.id) + '">' +
+      PM.renderPOSummary(po).replace('aria-expanded="false"', 'aria-expanded="' + open + '"') +
+      '<div class="po-detail' + (open ? '' : ' hidden') + '">' + (open ? (po.jobs ? poDetailHTML(po) : PM.loadingHTML()) : '') + '</div></div>';
+  }
+
+  function poDetailHTML(po) {
+    const jobs = po.jobs || [];
+    const pid = esc(po.id);
+    const meta =
+      '<div class="meta-list" style="margin-top:0">' +
+      '<div class="meta"><span class="k">Ordered</span><span class="v">' + esc(PM.fmtDate(po.date)) + '</span></div>' +
+      '<div class="meta"><span class="k">Est. Delivery</span><span class="v">' + esc(PM.fmtDate(po.delivery)) + '</span></div>' +
+      (po.updated_at ? '<div class="meta"><span class="k">Last Updated</span><span class="v">' + esc(PM.fmtDateTime(po.updated_at)) + '</span></div>' : '') +
+      '</div>';
+    const actions =
+      '<div class="grp">' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-po-action="edit" data-po-id="' + pid + '">Edit PO</button>' +
+      '<button type="button" class="btn btn-ghost btn-sm" data-po-action="archive" data-po-id="' + pid + '">Archive</button>' +
+      '<button type="button" class="btn btn-danger btn-sm" data-po-action="delete" data-po-id="' + pid + '">Delete</button>' +
+      '</div>';
+    const jobsHTML = jobs.length
+      ? jobs.map((j, i) => PM.renderJob(j, i, {
+        editable: true,
+        noteForm: true,
+        canDeleteNotes: isHead(),
+        actionsHtml:
+          '<button type="button" class="btn btn-ghost btn-xs" data-job-action="edit" data-job-id="' + esc(j.id) + '">Edit</button>' +
+          (j.delayed
+            ? '<button type="button" class="btn btn-ghost btn-xs" data-job-action="clear-delay" data-job-id="' + esc(j.id) + '">Clear Delay</button>'
+            : '<button type="button" class="btn btn-ghost btn-xs" data-job-action="delay" data-job-id="' + esc(j.id) + '">Mark Delayed</button>') +
+          '<button type="button" class="btn btn-danger btn-xs" data-job-action="delete" data-job-id="' + esc(j.id) + '">Delete</button>'
+      })).join('')
+      : '<div class="empty" style="margin-top:16px;padding:32px"><h4>No jobs on this PO</h4><p class="mb-0">Jobs can only be added when a PO is created.</p></div>';
+    return '<div class="po-toolbar">' + meta + actions + '</div>' + jobsHTML;
+  }
+
+  /** Re-fetch a single PO's detail and re-render its card */
+  async function refreshPO(poId, opts) {
+    opts = opts || {};
+    try {
+      const data = await api.get('/api/po/' + encodeURIComponent(poId) + '/detail');
+      const raw = data.po || data.purchase_order || data;
+      const fresh = PM.normPO(raw);
+      if (!fresh.jobs) fresh.jobs = PM.pickArray(data, ['jobs']).map(PM.normJob);
+      if (fresh.id == null) fresh.id = poId;
+      const idx = A.pos.findIndex((p) => String(p.id) === String(poId));
+      if (fresh.archived || truthyArchived(data)) {
+        if (idx > -1) A.pos.splice(idx, 1);
+        A.open.delete(String(poId));
+        PM.toast(PM.poLabel(fresh.number) + ' is complete and has been archived.');
+        setCount('orders', A.pos.length);
+        renderOrdersList();
+        loadArchive();
+        return;
+      }
+      if (idx > -1) {
+        // keep list-level fields (e.g. codes) if detail omits them
+        const old = A.pos[idx];
+        if (!fresh.codes.length && old.codes.length) { fresh.codes = old.codes; fresh.clientIds = old.clientIds; }
+        A.pos[idx] = fresh;
+      } else {
+        A.pos.unshift(fresh);
+      }
+      replaceCard(fresh);
+    } catch (err) {
+      if (err.status === 404) { loadOrders(); loadArchive(); return; }
+      if (!opts.quiet) fail(err);
+      else {
+        const card = $('#orders-list .po-card[data-key="' + cssEsc(String(poId)) + '"]');
+        const po = A.pos.find((p) => String(p.id) === String(poId));
+        if (card && po && !po.jobs) $('.po-detail', card).innerHTML = PM.emptyHTML('Could not load jobs', err.message);
+      }
+    }
+  }
+
+  function truthyArchived(d) {
+    return PM.truthy(d.archived) || PM.truthy(d.is_archived) || String(d.status || '').toLowerCase() === 'archived';
+  }
+
+  function cssEsc(s) { return window.CSS && CSS.escape ? CSS.escape(s) : s.replace(/"/g, '\\"'); }
+
+  function replaceCard(po) {
+    renderOrderStats();
+    const card = $('#orders-list .po-card[data-key="' + cssEsc(keyOf(po)) + '"]');
+    if (!card) { renderOrdersList(); return; }
+    const tmp = document.createElement('div');
+    tmp.innerHTML = poCardHTML(po);
+    card.replaceWith(tmp.firstElementChild);
+  }
+
+  function findPO(poId) { return A.pos.find((p) => String(p.id) === String(poId)); }
+  function findJob(jobId) {
+    for (const p of A.pos) {
+      const j = (p.jobs || []).find((x) => String(x.id) === String(jobId));
+      if (j) return { po: p, job: j };
+    }
+    return { po: null, job: null };
+  }
+  function poIdFromEl(el) {
+    const card = el.closest('.po-card');
+    return card ? card.getAttribute('data-po-id') : null;
+  }
+
+  /* ---------- PO form ---------- */
+  function clientPickerHTML(selectedIds) {
+    return '<div class="client-picker" data-client-picker>' +
+      '<div class="picked" data-picked></div>' +
+      '<select data-client-select aria-label="Add client code"></select>' +
+      '</div><span class="hint">Optional. Link one or more client codes so these clients see this PO on their dashboard.</span>';
+  }
+
+  function mountClientPicker(root, initialIds, onPick) {
+    const picked = new Set((initialIds || []).map(String));
+    const box = $('[data-picked]', root);
+    const sel = $('[data-client-select]', root);
+    function draw() {
+      box.innerHTML = Array.from(picked).map((id) => {
+        const c = A.clients.find((x) => String(x.id) === id);
+        const label = c ? c.code : id;
+        return '<span class="code-chip" title="' + esc(c ? c.company : '') + '">' + esc(label) +
+          '<button type="button" data-unpick="' + esc(id) + '" aria-label="Remove ' + esc(label) + '">×</button></span>';
       }).join('');
-  }catch(e){$('tab-c').innerHTML='<div class="msg-err">'+esc(e.message)+'</div>'}
-}
-function showAddUser(){
-  openModal('<div class="gm-hdr"><h3>Add Team Member</h3><button class="gm-x" onclick="closeModal()">×</button></div><div class="gm-body"><div id="au-msg"></div>'+
-    '<div class="fw"><label>Username</label><input type="text" id="au-user"></div>'+
-    '<div class="fw"><label>Password</label><input type="password" id="au-pass"></div>'+
-    '<div class="fw"><label>Security Question</label><input type="text" id="au-q" placeholder="e.g. Favourite colour?"></div>'+
-    '<div class="fw"><label>Security Answer</label><input type="text" id="au-a"></div>'+
-    '<div class="form-acts"><button class="btn-s" onclick="closeModal()">Cancel</button><button class="btn-p" onclick="doAddUser()">Create</button></div></div>');
-}
-async function doAddUser(){
-  var u=$('au-user').value.trim(),p=$('au-pass').value,q=$('au-q').value.trim(),a=$('au-a').value.trim();
-  if(!u||!p){$('au-msg').innerHTML='<div class="msg-err">Username and password required.</div>';return}
-  try{await api('/api/admin/team',{method:'POST',body:{username:u,password:p,security_question:q,security_answer:a}});closeModal();toast(u+' added!');await loadTeam()}
-  catch(e){$('au-msg').innerHTML='<div class="msg-err">'+esc(e.message)+'</div>'}
-}
-function confirmDelUser(id,name){
-  openModal('<div class="gm-body" style="text-align:center;padding:48px;"><div style="font-size:3rem;margin-bottom:16px;">⚠️</div><h3 style="font-family:Rajdhani,sans-serif;font-size:20px;margin-bottom:8px;">Remove?</h3><p style="color:var(--tm);margin-bottom:24px;">Remove <strong>'+esc(name)+'</strong>?</p><div style="display:flex;gap:12px;justify-content:center;"><button class="btn-s" onclick="closeModal()">Cancel</button><button class="btn-d" onclick="doDelUser('+id+')">Remove</button></div></div>');
-}
-async function doDelUser(id){try{await api('/api/admin/team/'+id,{method:'DELETE'});closeModal();toast('Removed.');await loadTeam()}catch(e){toast(e.message,'err')}}
-function showResetPw(id,name){
-  openModal('<div class="gm-hdr"><h3>Reset Password</h3><button class="gm-x" onclick="closeModal()">×</button></div><div class="gm-body"><div id="rp-msg"></div><p style="margin-bottom:16px;color:var(--tm);">New password for <strong>'+esc(name)+'</strong></p><div class="fw"><label>New Password</label><input type="password" id="rp-pw"></div><div class="form-acts"><button class="btn-s" onclick="closeModal()">Cancel</button><button class="btn-p" onclick="doResetPw('+id+')">Reset</button></div></div>');
-}
-async function doResetPw(id){var p=$('rp-pw').value;if(!p||p.length<4){$('rp-msg').innerHTML='<div class="msg-err">Min 4 characters.</div>';return}try{await api('/api/admin/team/'+id+'/reset-password',{method:'POST',body:{newPassword:p}});closeModal();toast('Password reset.')}catch(e){$('rp-msg').innerHTML='<div class="msg-err">'+esc(e.message)+'</div>'}}
+      const avail = A.clients.filter((c) => !picked.has(String(c.id)));
+      sel.innerHTML = '<option value="">' + (A.clients.length ? (avail.length ? '+ Link a client code…' : 'All clients linked') : 'No clients yet — add them under Manage Clients') + '</option>' +
+        avail.map((c) => '<option value="' + esc(c.id) + '">' + esc(c.code) + (c.company ? ' — ' + esc(c.company) : '') + '</option>').join('');
+    }
+    sel.addEventListener('change', () => {
+      if (!sel.value) return;
+      picked.add(sel.value);
+      const c = A.clients.find((x) => String(x.id) === sel.value);
+      if (onPick && c) onPick(c);
+      draw();
+    });
+    box.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-unpick]');
+      if (b) { picked.delete(b.getAttribute('data-unpick')); draw(); }
+    });
+    draw();
+    return {
+      ids: () => Array.from(picked),
+      codes: () => Array.from(picked).map((id) => (A.clients.find((c) => String(c.id) === id) || {}).code).filter(Boolean)
+    };
+  }
 
-/* AUDIT */
-async function loadAudit(){
-  $('tab-c').innerHTML='<div class="spin-w"><div class="spin"></div></div>';
-  try{var d=await api('/api/admin/audit-log');if(!d.logs.length){$('tab-c').innerHTML='<div class="empty"><div class="ei">📋</div><h3>No activity yet</h3></div>';return}
-    $('tab-c').innerHTML='<div style="overflow-x:auto;"><table class="at"><thead><tr><th>Date</th><th>User</th><th>Action</th><th>Order</th><th>Details</th></tr></thead><tbody>'+
-      d.logs.map(function(l){return '<tr><td>'+fmtDT(l.created_at)+'</td><td><strong>'+esc(l.user)+'</strong></td><td>'+esc(l.action)+'</td><td>'+esc(l.order_id||'—')+'</td><td>'+esc(l.details||'')+'</td></tr>'}).join('')+'</tbody></table></div>';
-  }catch(e){$('tab-c').innerHTML='<div class="msg-err">'+esc(e.message)+'</div>'}
-}
+  async function openPOForm(po) {
+    if (!A.clients.length) await loadClients(true);
+    const editing = !!po;
+    let initialIds = [];
+    if (po) {
+      initialIds = po.clientIds.length
+        ? po.clientIds
+        : po.codes.map((code) => (A.clients.find((c) => c.code === code) || {}).id).filter((x) => x != null).map(String);
+    }
+    PM.modal({
+      title: editing ? 'Edit Purchase Order' : 'New Purchase Order',
+      eyebrow: editing ? PM.poLabel(po.number) : 'Orders',
+      subtitle: editing ? '' : 'Enter the PO details and every job on it. Jobs cannot be added to a PO after it is created.',
+      wide: true,
+      sticky: true,
+      body:
+        '<form id="po-form" novalidate><div class="form-error hidden" data-error></div>' +
+        '<div class="form-grid">' +
+        '<div class="field"><label for="pf-number">PO Number <span class="req">*</span></label>' +
+        '<input type="text" id="pf-number" class="upper" required value="' + esc(po ? po.number : '') + '" placeholder="e.g. PO-2461"></div>' +
+        '<div class="field"><label for="pf-customer">Customer Name</label>' +
+        '<input type="text" id="pf-customer" value="' + esc(po ? po.customer : '') + '" placeholder="Company or contact name"></div>' +
+        '<div class="field"><label for="pf-date">Date of Order</label>' +
+        '<input type="date" id="pf-date" value="' + esc(po ? PM.toDateInput(po.date) : PM.todayIST()) + '"></div>' +
+        '<div class="field"><label for="pf-delivery">Estimated Delivery</label>' +
+        '<input type="date" id="pf-delivery" value="' + esc(po ? PM.toDateInput(po.delivery) : '') + '"></div>' +
+        '<div class="field span-2"><label>Client Codes</label>' + clientPickerHTML() + '</div>' +
+        (editing ? '' :
+          '<div class="form-section-title">Jobs</div>' +
+          '<div class="span-2" id="pf-jobs"></div>' +
+          '<div class="span-2"><button type="button" class="btn btn-ghost btn-sm" id="pf-add-job">+ Add Another Job</button></div>') +
+        '</div></form>',
+      foot:
+        '<button type="button" class="btn btn-ghost" data-close>Cancel</button>' +
+        '<button type="submit" class="btn" form="po-form">' + (editing ? 'Save Changes' : 'Create PO') + '</button>',
+      onMount(el, close) {
+        const picker = mountClientPicker(el, initialIds, (c) => {
+          const cust = $('#pf-customer', el);
+          if (!cust.value.trim() && c.company) cust.value = c.company;
+        });
+
+        const jobsWrap = $('#pf-jobs', el);
+        function renumber() {
+          const blocks = $$('.job-block', jobsWrap);
+          blocks.forEach((b, i) => {
+            $('.job-block-title', b).textContent = 'Job ' + (i + 1);
+            $('[data-remove-job]', b).classList.toggle('hidden', blocks.length === 1);
+          });
+        }
+        function addBlock(focus) {
+          const d = document.createElement('div');
+          d.className = 'job-block';
+          d.innerHTML =
+            '<div class="job-block-head"><span class="job-block-title"></span>' +
+            '<button type="button" class="link-btn danger small" data-remove-job>Remove</button></div>' +
+            jobFieldsHTML(null);
+          jobsWrap.appendChild(d);
+          wireJobBlock(d);
+          renumber();
+          if (focus) $('[data-f="name"]', d).focus();
+        }
+        if (jobsWrap) {
+          addBlock(false);
+          $('#pf-add-job', el).addEventListener('click', () => addBlock(true));
+          jobsWrap.addEventListener('click', (e) => {
+            const r = e.target.closest('[data-remove-job]');
+            if (r) { r.closest('.job-block').remove(); renumber(); }
+          });
+        }
+
+        PM.handleSubmit($('#po-form', el), async () => {
+          const number = $('#pf-number', el).value.trim().toUpperCase();
+          if (!number) throw new Error('PO number is required.');
+          const date = $('#pf-date', el).value;
+          const delivery = $('#pf-delivery', el).value;
+          if (date && delivery && delivery < date) throw new Error('Estimated delivery cannot be before the order date.');
+          const body = {
+            po_number: number,
+            customer_name: $('#pf-customer', el).value.trim(),
+            date_of_order: date || null,
+            estimated_delivery: delivery || null,
+            client_ids: picker.ids().map((x) => (isNaN(x) ? x : Number(x))),
+            client_codes: picker.codes()
+          };
+
+          if (editing) {
+            await api.put('/api/po/' + encodeURIComponent(po.id), body);
+            close();
+            PM.toast(PM.poLabel(number) + ' updated.');
+            await refreshPO(po.id);
+            return;
+          }
+
+          const blocks = $$('.job-block', jobsWrap);
+          blocks.forEach((b, i) => {
+            if (!$('[data-f="name"]', b).value.trim()) throw new Error('Please enter a job name for Job ' + (i + 1) + '.');
+          });
+          const jobs = blocks.map(readJobBlock);
+
+          const data = await api.post('/api/po', body);
+          let newId = idFrom(data);
+          if (newId == null) {
+            await loadOrders();
+            const found = A.pos.find((p) => String(p.number).toUpperCase() === number);
+            if (found) newId = found.id;
+          }
+          if (newId == null) throw new Error('PO was created, but its ID could not be read, so the jobs were not saved. Please contact your administrator.');
+
+          const failed = [];
+          for (const j of jobs) {
+            try { await api.post('/api/po/' + encodeURIComponent(newId) + '/jobs', j); }
+            catch (err) { failed.push(j.job_name + ' (' + err.message + ')'); }
+          }
+          close();
+          if (failed.length) PM.toast(PM.poLabel(number) + ' created, but these jobs failed: ' + failed.join('; '), 'error', 9000);
+          else PM.toast(PM.poLabel(number) + ' created with ' + jobs.length + (jobs.length === 1 ? ' job.' : ' jobs.'));
+          A.open.add(String(newId));
+          await loadOrders();
+          await refreshPO(newId, { quiet: true });
+        });
+      }
+    });
+  }
+
+  /* ---------- Job fields (shared by New PO form and Edit Job) ---------- */
+  function checkHTML(name, value, checked) {
+    return '<label class="check"><input type="checkbox" data-f="' + esc(name) + '" value="' + esc(value) + '"' + (checked ? ' checked' : '') + '>' +
+      '<span class="box"></span>' + esc(value) + '</label>';
+  }
+  function flagOn(v) {
+    return PM.truthy(v) || (!!v && !/^(0|false|no)$/i.test(String(v)));
+  }
+
+  function jobFieldsHTML(job) {
+    const finishVals = PM.asArray(job ? job.finish_type : '');
+    const isKnown = (v) => PM.FINISH_OPTIONS.some((o) => o.toLowerCase() === v.toLowerCase());
+    const finishOther = finishVals.filter((v) => !isKnown(v)).join(', ');
+    const gsm = job ? String(job.gsm || '').replace(/\s*gsm$/i, '') : '';
+    const gsmKnown = PM.GSM_OPTIONS.indexOf(gsm) > -1;
+    const procVals = PM.asArray(job ? job.process : '').map((v) => v.toLowerCase());
+
+    return '<div class="form-grid">' +
+      '<div class="field"><label><span>Job Name <span class="req">*</span></span>' +
+      '<input type="text" data-f="name" required value="' + esc(job ? job.name : '') + '" placeholder="e.g. Mono cartons, Letterheads" style="margin-top:6px"></label></div>' +
+      '<div class="field"><label><span>Quantity / Specs</span>' +
+      '<input type="text" data-f="qty" value="' + esc(job ? job.quantity_specs : '') + '" placeholder="e.g. 5,000 pcs · A4 · 4+0" style="margin-top:6px"></label></div>' +
+
+      '<div class="field span-2"><span class="field-label">Finish Type</span><div class="check-grid">' +
+      PM.FINISH_OPTIONS.map((o) => checkHTML('finish', o, finishVals.some((v) => v.toLowerCase() === o.toLowerCase()))).join('') +
+      checkHTML('finish-other-toggle', 'Other', !!finishOther) +
+      '</div><input type="text" data-f="finish-other" class="other-input' + (finishOther ? '' : ' hidden') + '" placeholder="Describe other finish" value="' + esc(finishOther) + '"></div>' +
+
+      '<div class="field"><span class="field-label">GSM</span><select data-f="gsm" aria-label="GSM">' +
+      '<option value="">Select GSM</option>' +
+      PM.GSM_OPTIONS.map((g) => '<option value="' + g + '"' + (gsm === g ? ' selected' : '') + '>' + g + ' GSM</option>').join('') +
+      '<option value="__other"' + (gsm && !gsmKnown ? ' selected' : '') + '>Other…</option></select>' +
+      '<input type="text" data-f="gsm-other" class="other-input' + (gsm && !gsmKnown ? '' : ' hidden') + '" placeholder="Enter GSM, e.g. 230" value="' + esc(gsm && !gsmKnown ? gsm : '') + '"></div>' +
+
+      '<div class="field"><span class="field-label">Add-ons</span><div class="check-grid">' +
+      checkHTML('embellishments', 'Embellishments', job && flagOn(job.embellishments)) +
+      checkHTML('cast_and_cure', 'Cast & Cure', job && flagOn(job.cast_and_cure)) +
+      '</div></div>' +
+
+      '<div class="field span-2"><span class="field-label">Process</span><div class="check-grid">' +
+      PM.PROCESS_OPTIONS.map((o) => checkHTML('process', o, procVals.indexOf(o.toLowerCase()) > -1)).join('') +
+      '</div></div>' +
+
+      '<div class="field span-2"><label><span>Other Specifications</span>' +
+      '<textarea data-f="other" rows="2" placeholder="Paper stock, die-line reference, packing instructions…" style="margin-top:6px">' + esc(job ? job.other : '') + '</textarea></label></div>' +
+      '</div>';
+  }
+
+  function wireJobBlock(root) {
+    const toggle = $('[data-f="finish-other-toggle"]', root);
+    const other = $('[data-f="finish-other"]', root);
+    toggle.addEventListener('change', () => {
+      other.classList.toggle('hidden', !toggle.checked);
+      if (toggle.checked) other.focus();
+    });
+    const sel = $('[data-f="gsm"]', root), gsmOther = $('[data-f="gsm-other"]', root);
+    sel.addEventListener('change', () => {
+      const o = sel.value === '__other';
+      gsmOther.classList.toggle('hidden', !o);
+      if (o) gsmOther.focus();
+    });
+  }
+
+  function readJobBlock(root) {
+    const name = $('[data-f="name"]', root).value.trim();
+    const finishes = $$('[data-f="finish"]:checked', root).map((i) => i.value);
+    const otherTxt = $('[data-f="finish-other"]', root).value.trim();
+    if ($('[data-f="finish-other-toggle"]', root).checked && otherTxt) finishes.push(otherTxt);
+    const sel = $('[data-f="gsm"]', root);
+    const gsm = (sel.value === '__other' ? $('[data-f="gsm-other"]', root).value.trim() : sel.value).replace(/\s*gsm$/i, '');
+    return {
+      job_name: name,
+      name: name,
+      quantity_specs: $('[data-f="qty"]', root).value.trim(),
+      finish_type: finishes.join(', '),
+      gsm: gsm,
+      process: $$('[data-f="process"]:checked', root).map((i) => i.value).join(', '),
+      embellishments: $('[data-f="embellishments"]', root).checked ? 1 : 0,
+      cast_and_cure: $('[data-f="cast_and_cure"]', root).checked ? 1 : 0,
+      other_specifications: $('[data-f="other"]', root).value.trim()
+    };
+  }
+
+  /** Edit an existing job (new jobs can only be added while creating a PO) */
+  function openJobForm(po, job) {
+    PM.modal({
+      title: 'Edit Job',
+      eyebrow: PM.poLabel(po.number),
+      wide: true,
+      sticky: true,
+      body: '<form id="job-form" novalidate><div class="form-error hidden" data-error></div>' + jobFieldsHTML(job) + '</form>',
+      foot:
+        '<button type="button" class="btn btn-ghost" data-close>Cancel</button>' +
+        '<button type="submit" class="btn" form="job-form">Save Job</button>',
+      onMount(el, close) {
+        const form = $('#job-form', el);
+        wireJobBlock(form);
+        PM.handleSubmit(form, async () => {
+          const body = readJobBlock(form);
+          if (!body.job_name) throw new Error('Job name is required.');
+          await api.put('/api/po/jobs/' + encodeURIComponent(job.id), body);
+          close();
+          PM.toast('Job "' + body.job_name + '" updated.');
+          A.open.add(keyOf(po));
+          await refreshPO(po.id);
+        });
+      }
+    });
+  }
+
+  /* ---------- Delay form ---------- */
+  function openDelayForm(po, job) {
+    PM.modal({
+      title: 'Mark Job as Delayed',
+      eyebrow: po.number + ' · ' + job.name,
+      subtitle: 'The client will see this reason on their tracking page.',
+      body:
+        '<form id="delay-form" novalidate><div class="form-error hidden" data-error></div>' +
+        '<div class="field"><label for="df-reason">Reason for Delay <span class="req">*</span></label>' +
+        '<textarea id="df-reason" rows="3" required placeholder="e.g. Awaiting paper stock; expected by Friday.">' + esc(job.delay_reason) + '</textarea></div>' +
+        '</form>',
+      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="delay-form">Mark Delayed</button>',
+      onMount(el, close) {
+        PM.handleSubmit($('#delay-form', el), async () => {
+          const reason = $('#df-reason', el).value.trim();
+          if (!reason) throw new Error('Please give a reason for the delay.');
+          await api.post('/api/po/jobs/' + encodeURIComponent(job.id) + '/delay', { is_delayed: 1, delay_reason: reason });
+          close();
+          PM.toast('"' + job.name + '" marked as delayed.');
+          await refreshPO(po.id);
+        });
+      }
+    });
+  }
+
+  /* ---------- Orders: delegated actions ---------- */
+  async function onOrdersClick(e) {
+    const poBtn = e.target.closest('[data-po-action]');
+    if (poBtn) {
+      const act = poBtn.getAttribute('data-po-action');
+      const po = findPO(poBtn.getAttribute('data-po-id'));
+      if (act === 'new') return openPOForm(null);
+      if (act === 'refresh') {
+        PM.setLoading(poBtn, true);
+        await loadOrders();
+        await Promise.all(Array.from(A.open).map((k) => { const p = A.pos.find((x) => keyOf(x) === k); return p ? refreshPO(p.id, { quiet: true }) : null; }));
+        PM.setLoading(poBtn, false);
+        return;
+      }
+      if (!po) return;
+      if (act === 'edit') return openPOForm(po);
+      if (act === 'archive') {
+        const ok = await PM.confirm({
+          title: 'Archive ' + PM.poLabel(po.number) + '?',
+          message: 'It will move to the Archive tab and clients will see "Order Completed". You can restore it later.',
+          confirmText: 'Archive'
+        });
+        if (!ok) return;
+        try {
+          await api.post('/api/po/' + encodeURIComponent(po.id) + '/archive');
+          PM.toast(PM.poLabel(po.number) + ' archived.');
+          A.open.delete(keyOf(po));
+          await loadOrders();
+          loadArchive();
+        } catch (err) { fail(err); }
+        return;
+      }
+      if (act === 'delete') {
+        const ok = await PM.confirm({
+          title: 'Delete ' + PM.poLabel(po.number) + '?',
+          html: 'This permanently deletes the purchase order, <strong>all its jobs</strong> and their notes. This cannot be undone.',
+          confirmText: 'Delete Permanently',
+          danger: true,
+          requireText: po.number
+        });
+        if (!ok) return;
+        try {
+          await api.del('/api/po/' + encodeURIComponent(po.id));
+          PM.toast(PM.poLabel(po.number) + ' deleted.');
+          A.open.delete(keyOf(po));
+          await loadOrders();
+        } catch (err) { fail(err); }
+      }
+      return;
+    }
+
+    const jobBtn = e.target.closest('[data-job-action]');
+    if (jobBtn) {
+      const act = jobBtn.getAttribute('data-job-action');
+      const { po, job } = findJob(jobBtn.getAttribute('data-job-id'));
+      if (!job) return;
+      if (act === 'edit') return openJobForm(po, job);
+      if (act === 'delay') return openDelayForm(po, job);
+      if (act === 'clear-delay') {
+        try {
+          await api.post('/api/po/jobs/' + encodeURIComponent(job.id) + '/delay', { is_delayed: 0, delay_reason: '' });
+          PM.toast('Delay cleared for "' + job.name + '".');
+          await refreshPO(po.id);
+        } catch (err) { fail(err); }
+        return;
+      }
+      if (act === 'delete') {
+        const ok = await PM.confirm({
+          title: 'Delete job "' + job.name + '"?',
+          message: 'This removes the job, its stage history and notes from ' + PM.poLabel(po.number) + '.',
+          confirmText: 'Delete Job',
+          danger: true
+        });
+        if (!ok) return;
+        try {
+          await api.del('/api/po/jobs/' + encodeURIComponent(job.id));
+          PM.toast('Job deleted.');
+          await refreshPO(po.id);
+        } catch (err) { fail(err); }
+      }
+      return;
+    }
+
+    const stageLi = e.target.closest('.pipeline.editable li[data-stage]');
+    if (stageLi) {
+      const jobId = stageLi.closest('.pipeline').getAttribute('data-job-id');
+      const { po, job } = findJob(jobId);
+      if (!job) return;
+      const stage = parseInt(stageLi.getAttribute('data-stage'), 10);
+      if (stage === job.stage) return;
+      const name = PM.STAGES[stage - 1];
+      if (stage < job.stage) {
+        const ok = await PM.confirm({
+          title: 'Move back to "' + name + '"?',
+          message: '"' + job.name + '" is currently at ' + PM.STAGES[job.stage - 1] + '. Moving back clears the later stage history.',
+          confirmText: 'Move Back'
+        });
+        if (!ok) return;
+      } else if (stage === 6) {
+        const ok = await PM.confirm({
+          title: 'Mark "' + job.name + '" as ready?',
+          message: 'This moves the job to Shipping / Ready for Pickup. When every job on the PO is complete, the PO may be archived automatically.',
+          confirmText: 'Mark Ready'
+        });
+        if (!ok) return;
+      }
+      try {
+        stageLi.closest('.pipeline').style.opacity = '.5';
+        await api.post('/api/po/jobs/' + encodeURIComponent(job.id) + '/stage', { stage });
+        PM.toast('"' + job.name + '" → ' + name);
+        await refreshPO(po.id);
+      } catch (err) {
+        fail(err);
+        stageLi.closest('.pipeline').style.opacity = '';
+      }
+      return;
+    }
+
+    const delNote = e.target.closest('[data-action="delete-note"]');
+    if (delNote) {
+      const noteId = delNote.getAttribute('data-note-id');
+      const poId = poIdFromEl(delNote);
+      const ok = await PM.confirm({ title: 'Remove this note?', message: 'The note will no longer be visible to the client.', confirmText: 'Remove', danger: true });
+      if (!ok) return;
+      try {
+        await api.del('/api/po/notes/' + encodeURIComponent(noteId));
+        PM.toast('Note removed.');
+        await refreshPO(poId);
+      } catch (err) { fail(err); }
+    }
+  }
+
+  async function onOrdersSubmit(e) {
+    const form = e.target.closest('form[data-action="add-note"]');
+    if (!form) return;
+    e.preventDefault();
+    const input = form.querySelector('input[name="note"]');
+    const note = input.value.trim();
+    if (!note) return;
+    const btn = form.querySelector('button');
+    const jobId = form.getAttribute('data-job-id');
+    const poId = poIdFromEl(form);
+    PM.setLoading(btn, true);
+    try {
+      await api.post('/api/po/jobs/' + encodeURIComponent(jobId) + '/notes', { note });
+      input.value = '';
+      PM.toast('Note added.');
+      await refreshPO(poId);
+    } catch (err) { fail(err); } finally { PM.setLoading(btn, false); }
+  }
+
+  /* ========================================================================
+     ARCHIVE
+     ======================================================================== */
+  function renderArchiveShell() {
+    const el = $('#tab-archive');
+    if (el.dataset.ready) { renderArchiveList(); return; }
+    el.dataset.ready = '1';
+    el.innerHTML =
+      '<div class="page-head"><div><h2>Archive</h2><p class="muted mb-0">Completed purchase orders. Clients looking these up will see “Order Completed”.</p></div></div>' +
+      '<div class="toolbar"><div class="field grow"><label for="ar-q">Search</label><input type="search" id="ar-q" placeholder="PO number, client, job name…"></div>' +
+      '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" data-ar-action="refresh">Refresh</button></div></div>' +
+      '<p class="result-count" id="archive-count"></p>' +
+      '<div id="archive-list">' + PM.loadingHTML('Loading archive…') + '</div>' +
+      '<p class="small muted" style="margin-top:14px">Permanent deletions are recorded in the Managing Director\'s audit log.</p>';
+    $('#ar-q').addEventListener('input', PM.debounce((e) => { A.archiveQ = e.target.value; renderArchiveList(); }, 150));
+  }
+
+  async function loadArchive() {
+    try {
+      const data = await api.get('/api/po?archived=1&include_archived=1');
+      let list;
+      if (Array.isArray(data.archived)) list = data.archived.map(PM.normPO);
+      else list = PM.pickArray(data, ['pos', 'purchase_orders', 'orders', 'items']).map(PM.normPO).filter((p) => p.archived);
+      A.archived = list;
+      setCount('archive', list.length);
+      renderArchiveList();
+    } catch (err) {
+      const l = $('#archive-list');
+      if (l) l.innerHTML = PM.emptyHTML('Could not load archive', err.message);
+    }
+  }
+
+  function renderArchiveList() {
+    const l = $('#archive-list');
+    if (!l || !$('#tab-archive').dataset.ready) return;
+    const q = A.archiveQ.trim().toLowerCase();
+    let rows = A.archived.filter((p) => !q || [p.number, p.customer, p.codes.join(' '), p.jobNames.join(' ')].join(' ').toLowerCase().indexOf(q) > -1);
+    rows.sort((a, b) => (PM.tsValue(b.archived_at) || PM.tsValue(b.date)) - (PM.tsValue(a.archived_at) || PM.tsValue(a.date)));
+    $('#archive-count').textContent = A.archived.length ? 'Showing ' + rows.length + ' of ' + A.archived.length + ' archived purchase orders' : '';
+    if (!A.archived.length) { l.innerHTML = PM.emptyHTML('The archive is empty', 'Completed purchase orders will appear here.'); return; }
+    if (!rows.length) { l.innerHTML = PM.emptyHTML('No matches', 'Try a different search.'); return; }
+    l.innerHTML =
+      '<div class="table-wrap"><table class="data stack"><thead><tr>' +
+      '<th>PO Number</th><th>Client</th><th>Date</th><th>Jobs</th><th class="text-right">Actions</th></tr></thead><tbody>' +
+      rows.map((p) =>
+        '<tr><td data-label="PO Number"><span class="po-number" style="font-size:1.15rem">' + esc(p.number) + '</span></td>' +
+        '<td data-label="Client">' + esc(p.customer || '—') + (p.codes.length ? '<div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">' + PM.renderCodes(p.codes) + '</div>' : '') + '</td>' +
+        '<td data-label="Date" class="nowrap">' + esc(PM.fmtDate(p.date)) +
+        (p.archived_at ? '<div class="small muted">Archived ' + esc(PM.fmtDateTime(p.archived_at)) + '</div>' : '') + '</td>' +
+        '<td data-label="Jobs">' + (p.jobNames.length ? esc(p.jobNames.join(', ')) : '<span class="muted">—</span>') + '</td>' +
+        '<td><div class="actions">' +
+        '<button type="button" class="btn btn-ghost btn-xs" data-ar-action="restore" data-po-id="' + esc(p.id) + '">Restore</button>' +
+        '<button type="button" class="btn btn-danger btn-xs" data-ar-action="delete" data-po-id="' + esc(p.id) + '">Delete</button>' +
+        '</div></td></tr>'
+      ).join('') + '</tbody></table></div>';
+  }
+
+  async function onArchiveClick(e) {
+    const b = e.target.closest('[data-ar-action]');
+    if (!b) return;
+    const act = b.getAttribute('data-ar-action');
+    if (act === 'refresh') { PM.setLoading(b, true); await loadArchive(); PM.setLoading(b, false); return; }
+    const po = A.archived.find((p) => String(p.id) === b.getAttribute('data-po-id'));
+    if (!po) return;
+    if (act === 'restore') {
+      const ok = await PM.confirm({ title: 'Restore ' + PM.poLabel(po.number) + '?', message: 'It will return to the active Orders list.', confirmText: 'Restore' });
+      if (!ok) return;
+      try {
+        await api.post('/api/po/' + encodeURIComponent(po.id) + '/unarchive');
+        PM.toast(PM.poLabel(po.number) + ' restored to active orders.');
+        await Promise.all([loadArchive(), loadOrders()]);
+      } catch (err) { fail(err); }
+    }
+    if (act === 'delete') {
+      const ok = await PM.confirm({
+        title: 'Permanently delete ' + PM.poLabel(po.number) + '?',
+        html: 'This archived PO and all of its records will be erased. This action is <strong>logged for the Managing Director</strong> and cannot be undone.',
+        confirmText: 'Delete Forever',
+        danger: true,
+        requireText: po.number
+      });
+      if (!ok) return;
+      try {
+        await api.del('/api/po/' + encodeURIComponent(po.id) + '/archive');
+        PM.toast('Archived ' + PM.poLabel(po.number) + ' deleted.');
+        await loadArchive();
+      } catch (err) { fail(err); }
+    }
+  }
+
+  /* ========================================================================
+     CLIENTS
+     ======================================================================== */
+  const CODE_RE = /^[A-Z]{2,4}[0-9]{0,3}$/;
+
+  function normClient(c) {
+    const contacts = PM.asArray(c.contacts).filter((x) => x && typeof x === 'object').map((x) => ({
+      id: x.id,
+      name: x.name || x.contact_name || '',
+      phone: x.phone || x.mobile || '',
+      email: x.email || '',
+      designation: x.designation || x.title || x.role || ''
+    }));
+    return {
+      raw: c,
+      id: c.id != null ? c.id : c.client_id,
+      code: String(c.client_code || c.code || '').toUpperCase(),
+      company: c.company_name || c.company || c.name || '',
+      contacts,
+      poCount: c.po_count != null ? c.po_count : (c.active_pos != null ? c.active_pos : (Array.isArray(c.pos) ? c.pos.length : null)),
+      created_at: c.created_at
+    };
+  }
+
+  function renderClientsShell() {
+    const el = $('#tab-clients');
+    if (el.dataset.ready) { renderClientsList(); return; }
+    el.dataset.ready = '1';
+    el.innerHTML =
+      '<div class="page-head"><div><h2>Clients</h2><p class="muted mb-0">Client codes let customers log in and see all of their active POs.</p></div>' +
+      '<button type="button" class="btn btn-sm" data-cl-action="new">+ New Client</button></div>' +
+      '<div class="toolbar"><div class="field grow"><label for="cl-q">Search</label><input type="search" id="cl-q" placeholder="Code, company, contact…"></div>' +
+      '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" data-cl-action="refresh">Refresh</button></div></div>' +
+      '<div id="clients-list">' + PM.loadingHTML('Loading clients…') + '</div>';
+    $('#cl-q').addEventListener('input', PM.debounce((e) => { A.clientQ = e.target.value; renderClientsList(); }, 150));
+  }
+
+  async function loadClients(silent) {
+    try {
+      const data = await api.get('/api/clients');
+      A.clients = PM.pickArray(data, ['clients', 'items']).map(normClient).sort((a, b) => a.code.localeCompare(b.code));
+      setCount('clients', A.clients.length);
+      renderClientsList();
+    } catch (err) {
+      if (!silent) {
+        const l = $('#clients-list');
+        if (l) l.innerHTML = PM.emptyHTML('Could not load clients', err.message);
+      }
+    }
+  }
+
+  function renderClientsList() {
+    const l = $('#clients-list');
+    if (!l || !$('#tab-clients').dataset.ready) return;
+    const q = A.clientQ.trim().toLowerCase();
+    const rows = A.clients.filter((c) => !q || [c.code, c.company, c.contacts.map((x) => [x.name, x.phone, x.email, x.designation].join(' ')).join(' ')]
+      .join(' ').toLowerCase().indexOf(q) > -1);
+    if (!A.clients.length) {
+      l.innerHTML = '<div class="empty"><h4>No clients yet</h4><p>Create a client code (e.g. TATA, BV01) and share it with your customer along with their password.</p>' +
+        '<button type="button" class="btn btn-sm" data-cl-action="new">+ New Client</button></div>';
+      return;
+    }
+    if (!rows.length) { l.innerHTML = PM.emptyHTML('No matches', 'Try a different search.'); return; }
+    l.innerHTML =
+      '<div class="table-wrap"><table class="data stack"><thead><tr><th>Code</th><th>Company</th><th>Contacts</th><th>POs</th><th class="text-right">Actions</th></tr></thead><tbody>' +
+      rows.map((c) =>
+        '<tr><td data-label="Code"><span class="code-chip">' + esc(c.code) + '</span></td>' +
+        '<td data-label="Company"><strong style="font-weight:500">' + esc(c.company || '—') + '</strong>' +
+        (c.created_at ? '<div class="small muted">Added ' + esc(PM.fmtDate(c.created_at)) + '</div>' : '') + '</td>' +
+        '<td data-label="Contacts">' + (c.contacts.length
+          ? c.contacts.map((x) => '<div class="contact-mini"><div>' + esc(x.name || '—') + (x.designation ? ' <span class="d">· ' + esc(x.designation) + '</span>' : '') + '</div>' +
+            '<div class="d">' + [x.phone ? '<a href="tel:' + esc(x.phone.replace(/\s/g, '')) + '">' + esc(x.phone) + '</a>' : '', x.email ? '<a href="mailto:' + esc(x.email) + '">' + esc(x.email) + '</a>' : ''].filter(Boolean).join(' · ') + '</div></div>').join('')
+          : '<span class="muted small">No contacts</span>') + '</td>' +
+        '<td data-label="POs">' + (c.poCount != null ? esc(c.poCount) : '<span class="muted">—</span>') + '</td>' +
+        '<td><div class="actions">' +
+        '<button type="button" class="btn btn-ghost btn-xs" data-cl-action="edit" data-id="' + esc(c.id) + '">Edit</button>' +
+        (canChangeClientPw() ? '<button type="button" class="btn btn-ghost btn-xs" data-cl-action="password" data-id="' + esc(c.id) + '">Password</button>' : '') +
+        (isHead() ? '<button type="button" class="btn btn-danger btn-xs" data-cl-action="delete" data-id="' + esc(c.id) + '">Delete</button>' : '') +
+        '</div></td></tr>'
+      ).join('') + '</tbody></table></div>';
+  }
+
+  function contactRowHTML(c) {
+    c = c || {};
+    return '<div class="contact-row" data-contact' + (c.id != null ? ' data-contact-id="' + esc(c.id) + '"' : '') + '>' +
+      '<input type="text" data-k="name" placeholder="Name" value="' + esc(c.name) + '" aria-label="Contact name">' +
+      '<input type="tel" data-k="phone" placeholder="Phone" value="' + esc(c.phone) + '" aria-label="Phone">' +
+      '<input type="email" data-k="email" placeholder="Email" value="' + esc(c.email) + '" aria-label="Email">' +
+      '<input type="text" data-k="designation" placeholder="Designation" value="' + esc(c.designation) + '" aria-label="Designation">' +
+      '<button type="button" class="icon-btn" data-remove-contact aria-label="Remove contact">×</button></div>';
+  }
+
+  async function openClientForm(client) {
+    const editing = !!client;
+    if (editing && client.id != null) {
+      try {
+        const data = await api.get('/api/clients/' + encodeURIComponent(client.id));
+        const full = normClient(data.client || data);
+        if (full.contacts.length || !client.contacts.length) client = Object.assign({}, client, { contacts: full.contacts, company: full.company || client.company });
+      } catch (e) { /* use list data */ }
+    }
+    const contacts = editing && client.contacts.length ? client.contacts : [{}];
+    PM.modal({
+      title: editing ? 'Edit Client' : 'New Client',
+      eyebrow: editing ? client.code : 'Manage Clients',
+      wide: true,
+      sticky: true,
+      body:
+        '<form id="client-form" novalidate><div class="form-error hidden" data-error></div>' +
+        '<div class="form-grid">' +
+        '<div class="field"><label for="cf-code">Client Code <span class="req">*</span></label>' +
+        '<input type="text" id="cf-code" class="upper" maxlength="7" required value="' + esc(editing ? client.code : '') + '" placeholder="e.g. TATA or BV01"' + (editing ? ' readonly style="background:var(--parchment)"' : '') + '>' +
+        '<span class="hint">' + (editing ? 'Client codes cannot be changed once created.' : '2–4 letters, optionally followed by 1–3 numbers.') + '</span></div>' +
+        '<div class="field"><label for="cf-company">Company Name <span class="req">*</span></label>' +
+        '<input type="text" id="cf-company" required value="' + esc(editing ? client.company : '') + '"></div>' +
+        (editing ? '' :
+          '<div class="field"><label for="cf-pw">Client Password <span class="req">*</span></label><input type="password" id="cf-pw" autocomplete="new-password" required>' +
+          '<span class="hint">Share this with the client. Only Planning or the MD can change it later.</span></div>' +
+          '<div class="field"><label for="cf-pw2">Confirm Password <span class="req">*</span></label><input type="password" id="cf-pw2" autocomplete="new-password" required></div>') +
+        '<div class="form-section-title">Contacts</div>' +
+        '<div class="span-2" id="cf-contacts">' + contacts.map(contactRowHTML).join('') + '</div>' +
+        '<div class="span-2"><button type="button" class="link-btn" id="cf-add-contact">+ Add another contact</button></div>' +
+        '</div></form>',
+      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="client-form">' + (editing ? 'Save Changes' : 'Create Client') + '</button>',
+      onMount(el, close) {
+        const wrap = $('#cf-contacts', el);
+        $('#cf-add-contact', el).addEventListener('click', () => {
+          wrap.insertAdjacentHTML('beforeend', contactRowHTML({}));
+          wrap.lastElementChild.querySelector('input').focus();
+        });
+        wrap.addEventListener('click', (e) => {
+          const r = e.target.closest('[data-remove-contact]');
+          if (!r) return;
+          const row = r.closest('[data-contact]');
+          if ($$('[data-contact]', wrap).length > 1) row.remove();
+          else $$('input', row).forEach((i) => (i.value = ''));
+        });
+        const codeIn = $('#cf-code', el);
+        if (!editing) codeIn.addEventListener('input', () => { codeIn.value = codeIn.value.toUpperCase().replace(/[^A-Z0-9]/g, ''); });
+
+        PM.handleSubmit($('#client-form', el), async () => {
+          const code = codeIn.value.trim().toUpperCase();
+          const company = $('#cf-company', el).value.trim();
+          if (!CODE_RE.test(code)) throw new Error('Client code must be 2–4 letters followed by up to 3 numbers (e.g. TATA, BV01).');
+          if (!company) throw new Error('Company name is required.');
+          const list = $$('[data-contact]', wrap).map((row) => {
+            const o = {};
+            $$('input', row).forEach((i) => (o[i.getAttribute('data-k')] = i.value.trim()));
+            const cid = row.getAttribute('data-contact-id');
+            if (cid) o.id = isNaN(cid) ? cid : Number(cid);
+            return o;
+          }).filter((o) => o.name || o.phone || o.email || o.designation);
+          const bad = list.find((o) => o.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(o.email));
+          if (bad) throw new Error('Please check the email address for ' + (bad.name || 'a contact') + '.');
+          const body = { client_code: code, code, company_name: company, contacts: list };
+          if (editing) {
+            await api.put('/api/clients/' + encodeURIComponent(client.id), body);
+            PM.toast('Client ' + code + ' updated.');
+          } else {
+            const pw = $('#cf-pw', el).value;
+            if (pw.length < 4) throw new Error('Password must be at least 4 characters.');
+            if (pw !== $('#cf-pw2', el).value) throw new Error('Passwords do not match.');
+            body.password = pw;
+            await api.post('/api/clients', body);
+            PM.toast('Client ' + code + ' created.');
+          }
+          close();
+          await loadClients();
+        });
+      }
+    });
+  }
+
+  function openClientPassword(client) {
+    PM.modal({
+      title: 'Change Client Password',
+      eyebrow: client.code + (client.company ? ' · ' + client.company : ''),
+      subtitle: 'Remember to share the new password with the client.',
+      body:
+        '<form id="cpw-form" novalidate><div class="form-error hidden" data-error></div>' +
+        '<div class="field"><label for="cpw-1">New Password</label><input type="password" id="cpw-1" autocomplete="new-password" required></div>' +
+        '<div class="field"><label for="cpw-2">Confirm New Password</label><input type="password" id="cpw-2" autocomplete="new-password" required></div></form>',
+      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="cpw-form">Update Password</button>',
+      onMount(el, close) {
+        PM.handleSubmit($('#cpw-form', el), async () => {
+          const pw = $('#cpw-1', el).value;
+          if (pw.length < 4) throw new Error('Password must be at least 4 characters.');
+          if (pw !== $('#cpw-2', el).value) throw new Error('Passwords do not match.');
+          await api.post('/api/clients/' + encodeURIComponent(client.id) + '/change-password', { password: pw, newPassword: pw, new_password: pw });
+          close();
+          PM.toast('Password updated for ' + client.code + '.');
+        });
+      }
+    });
+  }
+
+  async function onClientsClick(e) {
+    const b = e.target.closest('[data-cl-action]');
+    if (!b) return;
+    const act = b.getAttribute('data-cl-action');
+    if (act === 'new') return openClientForm(null);
+    if (act === 'refresh') { PM.setLoading(b, true); await loadClients(); PM.setLoading(b, false); return; }
+    const c = A.clients.find((x) => String(x.id) === b.getAttribute('data-id'));
+    if (!c) return;
+    if (act === 'edit') { PM.setLoading(b, true); await openClientForm(c); PM.setLoading(b, false); return; }
+    if (act === 'password') return openClientPassword(c);
+    if (act === 'delete') {
+      const ok = await PM.confirm({
+        title: 'Delete client ' + c.code + '?',
+        message: 'The client will no longer be able to log in. Their purchase orders are not deleted, but will be unlinked from this code.',
+        confirmText: 'Delete Client',
+        danger: true,
+        requireText: c.code
+      });
+      if (!ok) return;
+      try {
+        await api.del('/api/clients/' + encodeURIComponent(c.id));
+        PM.toast('Client ' + c.code + ' deleted.');
+        await loadClients();
+      } catch (err) { fail(err); }
+    }
+  }
+
+  /* ========================================================================
+     TEAM (head_admin only)
+     ======================================================================== */
+  function renderTeamShell() {
+    const el = $('#tab-team');
+    if (!isHead()) { el.innerHTML = PM.emptyHTML('Restricted', 'Only the Managing Director can manage the team.'); delete el.dataset.ready; return; }
+    if (el.dataset.ready) { renderTeamList(); return; }
+    el.dataset.ready = '1';
+    el.innerHTML =
+      '<div class="page-head"><div><h2>Team</h2><p class="muted mb-0">Add staff, assign roles and reset passwords. <strong style="font-weight:500">Planning</strong> can also change client passwords.</p></div>' +
+      '<button type="button" class="btn btn-sm" data-tm-action="new">+ Add Member</button></div>' +
+      '<div id="team-list">' + PM.loadingHTML('Loading team…') + '</div>';
+  }
+
+  async function loadTeam() {
+    if (!isHead()) return;
+    try {
+      const data = await api.get('/api/admin/team');
+      A.team = PM.pickArray(data, ['users', 'team', 'members']);
+      renderTeamList();
+    } catch (err) {
+      const l = $('#team-list');
+      if (l) l.innerHTML = PM.emptyHTML('Could not load team', err.message);
+      if (err.status === 401) fail(err);
+    }
+  }
+
+  function renderTeamList() {
+    const l = $('#team-list');
+    if (!l) return;
+    if (!A.team.length) { l.innerHTML = PM.emptyHTML('No team members yet', 'Add your first team member.'); return; }
+    const me = PM.state.user || {};
+    const order = { head_admin: 0, planning: 1, staff: 2 };
+    const rows = A.team.slice().sort((a, b) => (order[a.role] - order[b.role]) || String(a.username).localeCompare(String(b.username)));
+    l.innerHTML =
+      '<div class="table-wrap"><table class="data stack"><thead><tr><th>Username</th><th>Role</th><th>Added</th><th class="text-right">Actions</th></tr></thead><tbody>' +
+      rows.map((u) => {
+        const self = u.username === me.username || (me.id != null && String(u.id) === String(me.id));
+        const head = u.role === 'head_admin';
+        return '<tr><td data-label="Username"><strong style="font-weight:500">' + esc(u.username) + '</strong>' + (self ? ' <span class="small muted">(you)</span>' : '') + '</td>' +
+          '<td data-label="Role">' + (head
+            ? '<span class="badge badge-dark no-dot">Managing Director</span>'
+            : '<select class="role-select" data-tm-role data-id="' + esc(u.id) + '" aria-label="Role for ' + esc(u.username) + '">' +
+              '<option value="staff"' + (u.role === 'staff' ? ' selected' : '') + '>Staff</option>' +
+              '<option value="planning"' + (u.role === 'planning' ? ' selected' : '') + '>Planning</option></select>') + '</td>' +
+          '<td data-label="Added">' + esc(PM.fmtDate(u.created_at)) + '</td>' +
+          '<td><div class="actions">' +
+          '<button type="button" class="btn btn-ghost btn-xs" data-tm-action="reset" data-id="' + esc(u.id) + '">Reset Password</button>' +
+          (head ? '' : '<button type="button" class="btn btn-danger btn-xs" data-tm-action="delete" data-id="' + esc(u.id) + '">Remove</button>') +
+          '</div></td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  function openMemberForm() {
+    PM.modal({
+      title: 'Add Team Member',
+      eyebrow: 'Manage Team',
+      sticky: true,
+      body:
+        '<form id="tm-form" novalidate><div class="form-error hidden" data-error></div>' +
+        '<div class="field"><label for="tm-user">Username <span class="req">*</span></label><input type="text" id="tm-user" autocomplete="off" required></div>' +
+        '<div class="form-grid">' +
+        '<div class="field"><label for="tm-pw">Password <span class="req">*</span></label><input type="password" id="tm-pw" autocomplete="new-password" required></div>' +
+        '<div class="field"><label for="tm-role">Role</label><select id="tm-role"><option value="staff">Staff</option><option value="planning">Planning</option></select></div>' +
+        '</div>' +
+        '<div class="field"><label for="tm-q">Security Question</label><input type="text" id="tm-q" placeholder="Optional — for password recovery"></div>' +
+        '<div class="field"><label for="tm-a">Security Answer</label><input type="text" id="tm-a" autocomplete="off"></div>' +
+        '</form>',
+      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="tm-form">Add Member</button>',
+      onMount(el, close) {
+        PM.handleSubmit($('#tm-form', el), async () => {
+          const username = $('#tm-user', el).value.trim();
+          const password = $('#tm-pw', el).value;
+          const r = $('#tm-role', el).value;
+          if (!username) throw new Error('Username is required.');
+          if (password.length < 4) throw new Error('Password must be at least 4 characters.');
+          const data = await api.post('/api/admin/team', {
+            username, password, role: r,
+            security_question: $('#tm-q', el).value.trim(),
+            security_answer: $('#tm-a', el).value.trim()
+          });
+          // Make sure the role sticks even if the create endpoint ignores it
+          if (r !== 'staff') {
+            let id = idFrom(data) || (data.user && data.user.id);
+            if (id == null) {
+              try {
+                const t = await api.get('/api/admin/team');
+                const u = PM.pickArray(t, ['users', 'team']).find((x) => String(x.username).toLowerCase() === username.toLowerCase());
+                if (u) { id = u.id; if (u.role === r) id = null; }
+              } catch (e) { /* ignore */ }
+            }
+            if (id != null) { try { await api.post('/api/admin/team/' + encodeURIComponent(id) + '/role', { role: r }); } catch (e) { /* ignore */ } }
+          }
+          close();
+          PM.toast((data && data.message) || 'Team member added.');
+          await loadTeam();
+        });
+      }
+    });
+  }
+
+  function openResetStaffPw(u) {
+    PM.modal({
+      title: 'Reset Password',
+      eyebrow: u.username,
+      body:
+        '<form id="rp-form" novalidate><div class="form-error hidden" data-error></div>' +
+        '<div class="field"><label for="rp-1">New Password</label><input type="password" id="rp-1" autocomplete="new-password" required></div>' +
+        '<div class="field"><label for="rp-2">Confirm New Password</label><input type="password" id="rp-2" autocomplete="new-password" required></div></form>',
+      foot: '<button type="button" class="btn btn-ghost" data-close>Cancel</button><button type="submit" class="btn" form="rp-form">Reset Password</button>',
+      onMount(el, close) {
+        PM.handleSubmit($('#rp-form', el), async () => {
+          const pw = $('#rp-1', el).value;
+          if (pw.length < 4) throw new Error('Password must be at least 4 characters.');
+          if (pw !== $('#rp-2', el).value) throw new Error('Passwords do not match.');
+          const data = await api.post('/api/admin/team/' + encodeURIComponent(u.id) + '/reset-password', { newPassword: pw, new_password: pw, password: pw });
+          close();
+          PM.toast((data && data.message) || 'Password reset for ' + u.username + '.');
+        });
+      }
+    });
+  }
+
+  async function onTeamClick(e) {
+    const b = e.target.closest('[data-tm-action]');
+    if (!b) return;
+    const act = b.getAttribute('data-tm-action');
+    if (act === 'new') return openMemberForm();
+    const u = A.team.find((x) => String(x.id) === b.getAttribute('data-id'));
+    if (!u) return;
+    if (act === 'reset') return openResetStaffPw(u);
+    if (act === 'delete') {
+      const ok = await PM.confirm({ title: 'Remove ' + u.username + '?', message: 'They will no longer be able to log in. Their past activity stays in the audit log.', confirmText: 'Remove', danger: true });
+      if (!ok) return;
+      try {
+        await api.del('/api/admin/team/' + encodeURIComponent(u.id));
+        PM.toast(u.username + ' removed from the team.');
+        await loadTeam();
+      } catch (err) { fail(err); }
+    }
+  }
+
+  async function onTeamChange(e) {
+    const sel = e.target.closest('[data-tm-role]');
+    if (!sel) return;
+    const u = A.team.find((x) => String(x.id) === sel.getAttribute('data-id'));
+    if (!u) return;
+    const prev = u.role;
+    const next = sel.value;
+    sel.disabled = true;
+    try {
+      await api.post('/api/admin/team/' + encodeURIComponent(u.id) + '/role', { role: next });
+      u.role = next;
+      PM.toast(u.username + ' is now ' + (PM.ROLE_LABELS[next] || next) + '.');
+    } catch (err) {
+      sel.value = prev;
+      fail(err);
+    } finally {
+      sel.disabled = false;
+    }
+  }
+
+  /* ========================================================================
+     AUDIT LOG (head_admin only)
+     ======================================================================== */
+  function renderAuditShell() {
+    const el = $('#tab-audit');
+    if (!isHead()) { el.innerHTML = PM.emptyHTML('Restricted', 'Only the Managing Director can view the audit log.'); delete el.dataset.ready; return; }
+    if (el.dataset.ready) { renderAuditList(); return; }
+    el.dataset.ready = '1';
+    el.innerHTML =
+      '<div class="page-head"><div><h2>Audit Log</h2><p class="muted mb-0">Every change made in the system, newest first. Rows marked <span class="badge badge-crimson no-dot" style="padding:1px 8px">MD only</span> are visible to you alone.</p></div></div>' +
+      '<div class="toolbar">' +
+      '<div class="field grow"><label for="au-q">Search</label><input type="search" id="au-q" placeholder="User, PO number, details…"></div>' +
+      '<div class="field"><label for="au-action">Action</label><select id="au-action"><option value="">All actions</option></select></div>' +
+      '<div class="field" style="flex:0 0 auto;justify-content:flex-end"><label class="check" style="margin-top:18px"><input type="checkbox" id="au-md"><span class="box"></span>MD-only entries</label></div>' +
+      '<div class="tb-actions"><button type="button" class="btn btn-ghost btn-sm" id="au-refresh">Refresh</button></div>' +
+      '</div>' +
+      '<p class="result-count" id="audit-count"></p>' +
+      '<div id="audit-list">' + PM.loadingHTML('Loading audit log…') + '</div>';
+    $('#au-q').addEventListener('input', PM.debounce((e) => { A.auditF.q = e.target.value; renderAuditList(); }, 150));
+    $('#au-action').addEventListener('change', (e) => { A.auditF.action = e.target.value; renderAuditList(); });
+    $('#au-md').addEventListener('change', (e) => { A.auditF.mdOnly = e.target.checked; renderAuditList(); });
+    $('#au-refresh').addEventListener('click', async (e) => { const b = e.currentTarget; PM.setLoading(b, true); await loadAudit(); PM.setLoading(b, false); });
+  }
+
+  async function loadAudit() {
+    if (!isHead()) return;
+    try {
+      const data = await api.get('/api/admin/audit-log');
+      A.logs = PM.pickArray(data, ['logs', 'audit', 'entries']);
+      const actions = Array.from(new Set(A.logs.map((l) => l.action).filter(Boolean))).sort();
+      const sel = $('#au-action');
+      if (sel) {
+        sel.innerHTML = '<option value="">All actions</option>' + actions.map((a) => '<option value="' + esc(a) + '">' + esc(prettyAction(a)) + '</option>').join('');
+        sel.value = actions.indexOf(A.auditF.action) > -1 ? A.auditF.action : '';
+      }
+      renderAuditList();
+    } catch (err) {
+      const l = $('#audit-list');
+      if (l) l.innerHTML = PM.emptyHTML('Could not load audit log', err.message);
+      if (err.status === 401) fail(err);
+    }
+  }
+
+  function prettyAction(a) {
+    return String(a || '').replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, (m) => m.toUpperCase());
+  }
+  function actionClass(a) {
+    a = String(a || '').toUpperCase();
+    if (/DELETE|REMOVE/.test(a)) return 'del';
+    if (/CREATE|ADD|SETUP/.test(a)) return 'create';
+    if (/DELAY|RESET|PASSWORD|ROLE/.test(a)) return 'warn';
+    return '';
+  }
+
+  function renderAuditList() {
+    const l = $('#audit-list');
+    if (!l || !$('#tab-audit').dataset.ready) return;
+    const f = A.auditF;
+    const q = f.q.trim().toLowerCase();
+    const rows = A.logs.filter((x) => {
+      if (f.action && x.action !== f.action) return false;
+      if (f.mdOnly && x.visible_to !== 'md_only') return false;
+      if (q) {
+        const hay = [x.user, x.username, x.action, x.po_number, x.order_id, x.reference, x.details].join(' ').toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    }).sort((a, b) => PM.tsValue(b.created_at) - PM.tsValue(a.created_at));
+    $('#audit-count').textContent = A.logs.length ? 'Showing ' + rows.length + ' of ' + A.logs.length + ' entries' : '';
+    if (!A.logs.length) { l.innerHTML = PM.emptyHTML('No activity yet', 'Actions taken in the system will be recorded here.'); return; }
+    if (!rows.length) { l.innerHTML = PM.emptyHTML('No matching entries', 'Try a different search or filter.'); return; }
+    l.innerHTML =
+      '<div class="table-wrap"><table class="data stack"><thead><tr><th>When (IST)</th><th>User</th><th>Action</th><th>Reference</th><th>Details</th></tr></thead><tbody>' +
+      rows.map((x) => {
+        const md = x.visible_to === 'md_only';
+        const ref = x.po_number || x.order_id || x.reference || x.client_code || '';
+        return '<tr class="' + (md ? 'md-only' : '') + '">' +
+          '<td data-label="When (IST)" class="nowrap small">' + esc(PM.fmtDateTime(x.created_at)) + '</td>' +
+          '<td data-label="User">' + esc(x.user || x.username || '—') + '</td>' +
+          '<td data-label="Action"><span class="action-tag ' + actionClass(x.action) + '">' + esc(prettyAction(x.action)) + '</span>' +
+          (md ? ' <span class="badge badge-crimson no-dot" style="padding:1px 8px;margin-top:4px">MD only</span>' : '') + '</td>' +
+          '<td data-label="Reference">' + (ref ? '<span class="po-number">' + esc(ref) + '</span>' : '<span class="muted">—</span>') + '</td>' +
+          '<td data-label="Details" class="small">' + esc(x.details || '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+
+  /* ========================================================================
+     Bind once
+     ======================================================================== */
+  function bindOnce() {
+    A.bound = true;
+    $('#admin-tabs').addEventListener('click', (e) => {
+      const t = e.target.closest('.tab');
+      if (t && !t.classList.contains('hidden')) switchTab(t.getAttribute('data-tab'));
+    });
+    $('#tab-orders').addEventListener('click', onOrdersClick);
+    $('#tab-orders').addEventListener('submit', onOrdersSubmit);
+    $('#tab-archive').addEventListener('click', onArchiveClick);
+    $('#tab-clients').addEventListener('click', onClientsClick);
+    $('#tab-team').addEventListener('click', onTeamClick);
+    $('#tab-team').addEventListener('change', onTeamChange);
+  }
+
+  PM.Admin = { enter, reset, refreshPO, loadOrders };
+})();
