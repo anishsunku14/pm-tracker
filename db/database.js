@@ -14,6 +14,8 @@ const STAGES = [
   { number: 6, name: 'Shipping / Ready for Pickup' }
 ];
 
+const { jcLabel } = require('../lib/jobcard');
+
 let db = null;
 let dbReady = null;
 let batching = 0;
@@ -30,6 +32,7 @@ function initDb() {
 
       createTables();
       migrate();
+      fillJcNumbers();
 
       saveDb();
       resolve(db);
@@ -146,6 +149,23 @@ function createTables() {
 
   db.run(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)`);
 
+  // Job card production rows: printing, punching/binding, pasting, delivery
+  db.run(`CREATE TABLE IF NOT EXISTS job_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    section TEXT NOT NULL,
+    job_name TEXT,
+    start_date TEXT, start_time TEXT,
+    end_date TEXT, end_time TEXT,
+    total_qty TEXT, bal_qty TEXT,
+    operator TEXT,
+    del_date TEXT, invoice TEXT, quantity TEXT,
+    created_by TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  )`);
+  db.run('CREATE INDEX IF NOT EXISTS idx_entries_job ON job_entries(job_id)');
+
   // App settings editable by the MD (email / WhatsApp configuration)
   db.run(`CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)`);
 
@@ -204,6 +224,19 @@ function migrate() {
     db.run('UPDATE jobs SET last_notified_stage = current_stage');
   }
 
+  // Job cards: card details (JSON) and an automatic job card number (N001, N002, …)
+  const jobCols2 = columns('jobs');
+  if (jobCols2.indexOf('card') === -1) db.run('ALTER TABLE jobs ADD COLUMN card TEXT');
+  if (jobCols2.indexOf('jc_no') === -1) {
+    db.run('ALTER TABLE jobs ADD COLUMN jc_no TEXT');
+    // Number existing jobs in the order they were created
+    const ids = db.exec('SELECT id FROM jobs ORDER BY id');
+    let n = 0;
+    if (ids.length) ids[0].values.forEach((r) => { n++; db.run('UPDATE jobs SET jc_no = ? WHERE id = ?', [jcLabel(n), r[0]]); });
+    db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('jc_seq', ?)", [String(n)]);
+  }
+  db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_jcno ON jobs(jc_no)');
+
   const contactCols = columns('client_contacts');
   if (contactCols.indexOf('notify_email') === -1) db.run('ALTER TABLE client_contacts ADD COLUMN notify_email INTEGER DEFAULT 1');
   if (contactCols.indexOf('notify_whatsapp') === -1) db.run('ALTER TABLE client_contacts ADD COLUMN notify_whatsapp INTEGER DEFAULT 0');
@@ -234,6 +267,25 @@ function migrate() {
   }
   db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('migrated_orders_v1', ?)", [new Date().toISOString() + ' (' + moved + ' orders)']);
   if (moved) console.log('   Migrated ' + moved + ' old order(s) into purchase orders.');
+}
+
+/** Give a job card number to any job that doesn't have one yet */
+function fillJcNumbers() {
+  const missing = db.exec('SELECT id FROM jobs WHERE jc_no IS NULL ORDER BY id');
+  if (!missing.length || !missing[0].values.length) return;
+  const seqRow = db.exec("SELECT value FROM meta WHERE key = 'jc_seq'");
+  let n = seqRow.length && seqRow[0].values.length ? parseInt(seqRow[0].values[0][0], 10) || 0 : 0;
+  missing[0].values.forEach((r) => {
+    let label;
+    do {
+      n++;
+      label = jcLabel(n);
+      const taken = db.exec('SELECT id FROM jobs WHERE jc_no = ?', [label]);
+      if (!(taken.length && taken[0].values.length)) break;
+    } while (true);
+    db.run('UPDATE jobs SET jc_no = ? WHERE id = ?', [label, r[0]]);
+  });
+  db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('jc_seq', ?)", [String(n)]);
 }
 
 function saveDb() {
@@ -289,6 +341,16 @@ function dbAll(sql, params) {
   return results;
 }
 
+/** Next job card number: N001, N002, … (call inside the same batch as the insert) */
+function nextJcNo() {
+  const row = dbGet("SELECT value FROM meta WHERE key = 'jc_seq'");
+  let n = row ? parseInt(row.value, 10) || 0 : 0;
+  let label;
+  do { n++; label = jcLabel(n); } while (dbGet('SELECT id FROM jobs WHERE jc_no = ?', [label]));
+  dbRun("INSERT OR REPLACE INTO meta (key, value) VALUES ('jc_seq', ?)", [String(n)]);
+  return label;
+}
+
 /** Writes an audit entry. opts: { po_number, details, visible_to } */
 function audit(user, action, opts) {
   opts = opts || {};
@@ -296,4 +358,4 @@ function audit(user, action, opts) {
     [user || 'system', action, opts.po_number || null, opts.details || '', opts.visible_to || 'all']);
 }
 
-module.exports = { initDb, saveDb, dbRun, dbInsert, dbBatch, dbGet, dbAll, audit, STAGES };
+module.exports = { initDb, saveDb, dbRun, dbInsert, dbBatch, dbGet, dbAll, audit, nextJcNo, STAGES };

@@ -109,7 +109,7 @@
     el.innerHTML =
       '<div class="stat-row" id="order-stats"></div>' +
       '<div class="toolbar">' +
-      '<div class="field grow"><label for="of-q">Search</label><div class="input-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5L18 18"/></svg><input type="search" id="of-q" placeholder="PO, customer, client code or job" value="' + esc(f.q) + '"></div></div>' +
+      '<div class="field grow"><label for="of-q">Search</label><div class="input-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5L18 18"/></svg><input type="search" id="of-q" placeholder="PO, customer, client code, job or J.C. No." value="' + esc(f.q) + '"></div></div>' +
       '<div class="field"><label for="of-stage">Stage</label><select id="of-stage">' + PM.stageOptions('All stages') + '</select></div>' +
       '<div class="field"><label for="of-status">Status</label><select id="of-status">' +
       '<option value="">All statuses</option><option value="inprogress">In progress</option><option value="delayed">Delayed</option>' +
@@ -205,6 +205,7 @@
       '</div>';
     const actions =
       '<div class="grp">' +
+      (jobs.length ? '<button type="button" class="btn btn-secondary btn-sm" data-po-action="print-all" data-po-id="' + pid + '">Print all job cards</button>' : '') +
       '<button type="button" class="btn btn-secondary btn-sm" data-po-action="edit" data-po-id="' + pid + '">Edit PO</button>' +
       '<button type="button" class="btn btn-secondary btn-sm" data-po-action="archive" data-po-id="' + pid + '">Archive PO</button>' +
       '</div>';
@@ -213,8 +214,10 @@
         editable: true,
         noteForm: true,
         canDeleteNotes: isHead(),
+        afterSpecs: productionHTML(j),
         actionsHtml:
-          '<button type="button" class="btn btn-secondary btn-xs" data-job-action="edit" data-job-id="' + esc(j.id) + '">Edit</button>' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-job-action="print" data-job-id="' + esc(j.id) + '">Print card</button>' +
+          '<button type="button" class="btn btn-secondary btn-xs" data-job-action="edit" data-job-id="' + esc(j.id) + '">Edit card</button>' +
           (j.delayed
             ? '<button type="button" class="btn btn-secondary btn-xs" data-job-action="clear-delay" data-job-id="' + esc(j.id) + '">Clear delay</button>'
             : '<button type="button" class="btn btn-secondary btn-xs" data-job-action="delay" data-job-id="' + esc(j.id) + '">Mark delayed</button>') +
@@ -369,9 +372,9 @@
         '<input type="date" id="pf-delivery" value="' + esc(po ? PM.toDateInput(po.delivery) : '') + '"></div>' +
         '<div class="field span-2"><label>Client codes <span class="optional">Optional</span></label>' + clientPickerHTML() + '</div>' +
         (editing ? '' :
-          '<div class="form-section-title">Jobs</div>' +
+          '<div class="form-section-title">Job cards</div>' +
           '<div class="span-2" id="pf-jobs"></div>' +
-          '<div class="span-2"><button type="button" class="btn btn-ghost btn-sm" id="pf-add-job">Add another job</button></div>') +
+          '<div class="span-2"><button type="button" class="btn btn-ghost btn-sm" id="pf-add-job">Add another job card</button></div>') +
         '</div></form>',
       foot:
         '<button type="button" class="btn btn-secondary" data-close>Cancel</button>' +
@@ -386,7 +389,7 @@
         function renumber() {
           const blocks = $$('.job-block', jobsWrap);
           blocks.forEach((b, i) => {
-            $('.job-block-title', b).textContent = 'Job ' + (i + 1);
+            $('.job-block-title', b).textContent = 'Job card ' + (i + 1);
             $('[data-remove-job]', b).classList.toggle('hidden', blocks.length === 1);
           });
         }
@@ -436,7 +439,7 @@
 
           const blocks = $$('.job-block', jobsWrap);
           blocks.forEach((b, i) => {
-            if (!$('[data-f="name"]', b).value.trim()) throw new Error('Please enter a job name for Job ' + (i + 1) + '.');
+            if (!$('[data-f="name"]', b).value.trim()) throw new Error('Please enter a product name for Job ' + (i + 1) + '.');
           });
           const jobs = blocks.map(readJobBlock);
 
@@ -465,109 +468,152 @@
     });
   }
 
-  /* ---------- Job fields (shared by New PO form and Edit Job) ---------- */
-  function checkHTML(name, value, checked) {
+  /* ---------- Job card fields (shared by New PO form and Edit Job) ---------- */
+  function checkHTML(name, value, checked, label) {
     return '<label class="check"><input type="checkbox" data-f="' + esc(name) + '" value="' + esc(value) + '"' + (checked ? ' checked' : '') + '>' +
-      '<span class="box"></span>' + esc(value) + '</label>';
+      '<span class="box"></span>' + esc(label || value) + '</label>';
   }
-  function flagOn(v) {
-    return PM.truthy(v) || (!!v && !/^(0|false|no)$/i.test(String(v)));
+  function has(list, v) {
+    return (list || []).some((x) => String(x).toLowerCase() === String(v).toLowerCase());
+  }
+  function tf(key, label, c, opts) {
+    opts = opts || {};
+    const v = c[key] || '';
+    const input = opts.area
+      ? '<textarea data-c="' + key + '" rows="' + (opts.rows || 2) + '" maxlength="' + (opts.max || 2000) + '" placeholder="' + esc(opts.ph || '') + '" style="margin-top:6px">' + esc(v) + '</textarea>'
+      : '<input type="' + (opts.type || 'text') + '" data-c="' + key + '" maxlength="' + (opts.max || 120) + '" value="' + esc(v) + '" placeholder="' + esc(opts.ph || '') + '" style="margin-top:6px">';
+    return '<div class="field' + (opts.span ? ' span-2' : '') + '"><label><span>' + label + '</span>' + input + '</label></div>';
   }
 
+  let jobFormSeq = 0;
   function jobFieldsHTML(job) {
-    const finishVals = PM.asArray(job ? job.finish_type : '');
-    const isKnown = (v) => PM.FINISH_OPTIONS.some((o) => o.toLowerCase() === v.toLowerCase());
-    const finishOther = finishVals.filter((v) => !isKnown(v)).join(', ');
-    const gsm = job ? String(job.gsm || '').replace(/\s*gsm$/i, '') : '';
-    const gsmKnown = PM.GSM_OPTIONS.indexOf(gsm) > -1;
-    const procVals = PM.asArray(job ? job.process : '').map((v) => v.toLowerCase());
+    const c = Object.assign({}, (job && job.card) || {});
+    // Older jobs (before the job card) keep their quantity in quantity_specs
+    if (job && !c.quantity && job.quantity_specs) c.quantity = job.quantity_specs;
+    const legacy = job ? [
+      job.gsm ? 'GSM ' + job.gsm : '',
+      job.process ? 'Process: ' + job.process : '',
+      PM.flagOn(job.embellishments) ? 'Embellishments' : '',
+      PM.flagOn(job.cast_and_cure) ? 'Cast & cure' : '',
+      job.other ? 'Other: ' + job.other : ''
+    ].filter(Boolean) : [];
+    const machine = c.machine || '';
+    const colours = c.colours || {};
 
-    return '<div class="form-grid">' +
-      '<div class="field"><label><span>Job name <span class="req">*</span></span>' +
-      '<input type="text" data-f="name" required value="' + esc(job ? job.name : '') + '" placeholder="e.g. Mono cartons, Letterheads" style="margin-top:6px"></label></div>' +
-      '<div class="field"><label><span>Quantity / specs</span>' +
-      '<input type="text" data-f="qty" value="' + esc(job ? job.quantity_specs : '') + '" placeholder="e.g. 5,000 pcs · A4 · 4+0" style="margin-top:6px"></label></div>' +
+    const colourCells = PM.JC.COLOURS.P4.map((n) => {
+      const v = colours[n] || {};
+      const p3 = PM.JC.COLOURS.P3.indexOf(n) > -1;
+      return '<div class="ink-row' + (p3 ? '' : ' p4-only') + '" data-colour="' + esc(n) + '">' +
+        '<span class="ink-label">' + PM.colourSwatch(n) + '<span>' + esc(n) + '</span><span class="ink-full">' + esc(PM.JC.COLOUR_NAMES[n]) + '</span></span>' +
+        '<label class="check mini"><input type="checkbox" data-ink-plate' + (v.plate ? ' checked' : '') + '><span class="box"></span>Plate</label>' +
+        '<input type="text" data-ink-amt maxlength="20" value="' + esc(v.ink || '') + '" placeholder="Ink used" aria-label="' + esc(n) + ' ink used">' +
+        '</div>';
+    }).join('');
 
-      '<div class="field span-2"><span class="field-label">Finish type</span><div class="check-grid">' +
-      PM.FINISH_OPTIONS.map((o) => checkHTML('finish', o, finishVals.some((v) => v.toLowerCase() === o.toLowerCase()))).join('') +
-      checkHTML('finish-other-toggle', 'Other', !!finishOther) +
-      '</div><input type="text" data-f="finish-other" class="other-input' + (finishOther ? '' : ' hidden') + '" placeholder="Describe other finish" value="' + esc(finishOther) + '"></div>' +
+    const radioName = 'machine-' + (++jobFormSeq);
+    return '<div class="form-grid jobcard-form' + (machine ? ' m-' + machine.toLowerCase() : '') + '">' +
+      (job && job.jc_no
+        ? '<div class="field span-2 jc-chip-row"><span class="jc-chip">J.C. No. ' + esc(job.jc_no) + '</span></div>'
+        : '<div class="field span-2 jc-chip-row"><span class="jc-chip muted">J.C. No. is assigned automatically</span></div>') +
+      '<div class="field span-2"><label><span>Product name <span class="req">*</span></span>' +
+      '<input type="text" data-f="name" required maxlength="200" value="' + esc(job ? job.name : '') + '" placeholder="e.g. Mono cartons, Letterheads" style="margin-top:6px"></label></div>' +
+      tf('job_size', 'Job size', c, { ph: 'e.g. 210 × 297 mm' }) +
+      tf('quantity', 'Quantity', c, { ph: 'e.g. 5,000 pcs' }) +
+      tf('material', 'Material', c, { ph: 'e.g. 300 GSM FBB', max: 300 }) +
+      tf('material_rate', 'Material rate', c, { max: 60 }) +
+      tf('bill_no', 'Bill no.', c, { max: 60 }) +
+      tf('bill_date', 'Bill date', c, { type: 'date', max: 10 }) +
+      tf('new_plate_no', 'New plate no.', c, { max: 60 }) +
+      tf('old_plate_no', 'Old plate no.', c, { max: 60 }) +
+      tf('job_details', 'Job details', c, { area: true, span: true, max: 1000 }) +
+      tf('processing_details', 'Processing details', c, { area: true, span: true, max: 1000 }) +
 
-      '<div class="field"><span class="field-label">GSM</span><select data-f="gsm" aria-label="GSM">' +
-      '<option value="">Select GSM</option>' +
-      PM.GSM_OPTIONS.map((g) => '<option value="' + g + '"' + (gsm === g ? ' selected' : '') + '>' + g + ' GSM</option>').join('') +
-      '<option value="__other"' + (gsm && !gsmKnown ? ' selected' : '') + '>Other…</option></select>' +
-      '<input type="text" data-f="gsm-other" class="other-input' + (gsm && !gsmKnown ? '' : ' hidden') + '" placeholder="Enter GSM, e.g. 230" value="' + esc(gsm && !gsmKnown ? gsm : '') + '"></div>' +
+      '<div class="form-section-title">Printing</div>' +
+      '<div class="field span-2"><span class="field-label">Printing machine</span>' +
+      '<div class="check-grid">' +
+      ['P3', 'P4'].map((m) => '<label class="check"><input type="radio" name="' + radioName + '" data-machine value="' + m + '"' + (machine === m ? ' checked' : '') + '><span class="box"></span>' + m + '</label>').join('') +
+      '</div><span class="hint">P3: C M Y K Aqua · P4 adds White, UV and Drip. Tap again to clear.</span></div>' +
+      '<div class="field span-2 ink-wrap"><span class="field-label">Plate details &amp; inks consumption</span><div class="ink-rows">' + colourCells + '</div></div>' +
+      tf('printing_instructions', 'Printing instructions', c, { area: true, span: true }) +
 
-      '<div class="field"><span class="field-label">Add-ons</span><div class="check-grid">' +
-      checkHTML('embellishments', 'Embellishments', job && flagOn(job.embellishments)) +
-      checkHTML('cast_and_cure', 'Cast & cure', job && flagOn(job.cast_and_cure)) +
-      '</div></div>' +
+      '<div class="form-section-title">Lamination</div>' +
+      '<div class="field span-2"><div class="check-grid">' +
+      PM.JC.LAMINATION.map((o) => checkHTML('lamination', o, has(c.lamination, o))).join('') + '</div></div>' +
 
-      '<div class="field span-2"><span class="field-label">Process</span><div class="check-grid">' +
-      PM.PROCESS_OPTIONS.map((o) => checkHTML('process', o, procVals.indexOf(o.toLowerCase()) > -1)).join('') +
-      '</div></div>' +
+      '<div class="form-section-title">Foiling</div>' +
+      '<div class="field span-2"><div class="check-grid">' +
+      PM.JC.FOILING.map((o) => checkHTML('foiling', o, has(c.foiling, o))).join('') + '</div></div>' +
+      tf('foiling_instructions', 'Foiling instructions', c, { area: true, span: true }) +
 
-      '<div class="field span-2"><label><span>Other specifications</span>' +
-      '<textarea data-f="other" rows="2" placeholder="Paper stock, die-line reference, packing instructions…" style="margin-top:6px">' + esc(job ? job.other : '') + '</textarea></label></div>' +
+      '<div class="form-section-title">Punching / binding</div>' +
+      tf('die_no', 'Die no.', c, { max: 60 }) +
+      '<div class="field"><span class="field-label">Machine</span><div class="check-grid">' +
+      PM.JC.PUNCHING.map((o) => checkHTML('punching', o, has(c.punching, o))).join('') + '</div></div>' +
+
+      '<div class="form-section-title">Packing</div>' +
+      tf('packing_instructions', 'Packing instructions', c, { area: true, span: true }) +
+
+      (legacy.length
+        ? '<div class="field span-2"><div class="legacy-note"><strong>Earlier details (kept):</strong> ' + esc(legacy.join(' · ')) + '</div></div>'
+        : '') +
       '</div>';
   }
 
   function wireJobBlock(root) {
-    const toggle = $('[data-f="finish-other-toggle"]', root);
-    const other = $('[data-f="finish-other"]', root);
-    toggle.addEventListener('change', () => {
-      other.classList.toggle('hidden', !toggle.checked);
-      if (toggle.checked) other.focus();
-    });
-    const sel = $('[data-f="gsm"]', root), gsmOther = $('[data-f="gsm-other"]', root);
-    sel.addEventListener('change', () => {
-      const o = sel.value === '__other';
-      gsmOther.classList.toggle('hidden', !o);
-      if (o) gsmOther.focus();
+    const grid = $('.jobcard-form', root);
+    $$('[data-machine]', root).forEach((r) => {
+      // Radios can't normally be cleared; allow a second tap to clear
+      r.closest('label').addEventListener('pointerdown', () => { r.dataset.was = r.checked ? '1' : ''; });
+      r.addEventListener('click', () => {
+        if (r.dataset.was === '1') { r.checked = false; r.dataset.was = ''; }
+        grid.classList.remove('m-p3', 'm-p4');
+        const on = $('[data-machine]:checked', root);
+        if (on) grid.classList.add('m-' + on.value.toLowerCase());
+      });
     });
   }
 
   function readJobBlock(root) {
     const name = $('[data-f="name"]', root).value.trim();
-    const finishes = $$('[data-f="finish"]:checked', root).map((i) => i.value);
-    const otherTxt = $('[data-f="finish-other"]', root).value.trim();
-    if ($('[data-f="finish-other-toggle"]', root).checked && otherTxt) finishes.push(otherTxt);
-    const sel = $('[data-f="gsm"]', root);
-    const gsm = (sel.value === '__other' ? $('[data-f="gsm-other"]', root).value.trim() : sel.value).replace(/\s*gsm$/i, '');
-    return {
-      job_name: name,
-      name: name,
-      quantity_specs: $('[data-f="qty"]', root).value.trim(),
-      finish_type: finishes.join(', '),
-      gsm: gsm,
-      process: $$('[data-f="process"]:checked', root).map((i) => i.value).join(', '),
-      embellishments: $('[data-f="embellishments"]', root).checked ? 1 : 0,
-      cast_and_cure: $('[data-f="cast_and_cure"]', root).checked ? 1 : 0,
-      other_specifications: $('[data-f="other"]', root).value.trim()
-    };
+    const card = {};
+    $$('[data-c]', root).forEach((el) => { card[el.getAttribute('data-c')] = el.value.trim(); });
+    const m = $('[data-machine]:checked', root);
+    card.machine = m ? m.value : '';
+    card.colours = {};
+    if (card.machine) {
+      PM.JC.COLOURS[card.machine].forEach((n) => {
+        const row = $('.ink-row[data-colour="' + n + '"]', root);
+        const plate = $('[data-ink-plate]', row).checked;
+        const ink = $('[data-ink-amt]', row).value.trim();
+        if (plate || ink) card.colours[n] = { plate: plate, ink: ink };
+      });
+    }
+    ['lamination', 'foiling', 'punching'].forEach((k) => {
+      card[k] = $$('[data-f="' + k + '"]:checked', root).map((i) => i.value);
+    });
+    return { job_name: name, name: name, card: card };
   }
 
   /** Edit an existing job (new jobs can only be added while creating a PO) */
   function openJobForm(po, job) {
     PM.modal({
-      title: 'Edit job',
-      eyebrow: PM.poLabel(po.number),
+      title: 'Edit job card',
+      eyebrow: PM.poLabel(po.number) + (job.jc_no ? ' · ' + job.jc_no : ''),
       wide: true,
       sticky: true,
       body: '<form id="job-form" novalidate><div class="form-error hidden" data-error></div>' + jobFieldsHTML(job) + '</form>',
       foot:
         '<button type="button" class="btn btn-secondary" data-close>Cancel</button>' +
-        '<button type="submit" class="btn" form="job-form">Save job</button>',
+        '<button type="submit" class="btn" form="job-form">Save job card</button>',
       onMount(el, close) {
         const form = $('#job-form', el);
         wireJobBlock(form);
         PM.handleSubmit(form, async () => {
           const body = readJobBlock(form);
-          if (!body.job_name) throw new Error('Job name is required.');
+          if (!body.job_name) throw new Error('Product name is required.');
           await api.put('/api/po/jobs/' + encodeURIComponent(job.id), body);
           close();
-          PM.toast('Job "' + body.job_name + '" updated.');
+          PM.toast('Job card' + (job.jc_no ? ' ' + job.jc_no : '') + ' updated.');
           A.open.add(keyOf(po));
           await refreshPO(po.id);
         });
@@ -600,6 +646,103 @@
     });
   }
 
+  /* ---------- Production log (Printing / Punching / Pasting / Delivery) ---------- */
+  const SECTION_LABELS = { printing: 'Printing', punching: 'Punching / binding', pasting: 'Pasting', delivery: 'Delivery' };
+  function fmtDT(d, t) {
+    if (!d && !t) return '';
+    return [d ? PM.fmtDate(d) : '', t ? fmtTime(t) : ''].filter(Boolean).join(', ');
+  }
+  function fmtTime(t) {
+    const m = /^(\d{1,2}):(\d{2})/.exec(t || '');
+    if (!m) return t || '';
+    let h = Number(m[1]); const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return h + ':' + m[2] + ' ' + ap;
+  }
+  PM.fmtTime = fmtTime;
+
+  function productionHTML(job) {
+    if (!job.entries) return '';
+    const total = Object.keys(SECTION_LABELS).reduce((n, k) => n + (job.entries[k] || []).length, 0);
+    const jid = esc(job.id);
+    const secs = Object.keys(SECTION_LABELS).map((sec) => {
+      const rows = job.entries[sec] || [];
+      const isDel = sec === 'delivery';
+      const head = isDel
+        ? '<tr><th>#</th><th>Date</th><th>Invoice</th><th>Quantity</th><th></th></tr>'
+        : '<tr><th>#</th><th>Job name</th><th>Start</th><th>End</th><th>Total qty</th><th>Bal. qty</th><th>Operator</th><th></th></tr>';
+      const body = rows.map((r, i) => {
+        const act = '<td class="row-act"><button type="button" class="link-btn small" data-entry-action="edit" data-entry-id="' + esc(r.id) + '" data-job-id="' + jid + '" data-section="' + sec + '">Edit</button>' +
+          '<button type="button" class="link-btn small danger" data-entry-action="delete" data-entry-id="' + esc(r.id) + '" data-job-id="' + jid + '" data-section="' + sec + '">Remove</button></td>';
+        return isDel
+          ? '<tr><td data-label="#">' + (i + 1) + '</td><td data-label="Date">' + esc(PM.fmtDate(r.del_date)) + '</td><td data-label="Invoice">' + esc(r.invoice) + '</td><td data-label="Quantity">' + esc(r.quantity) + '</td>' + act + '</tr>'
+          : '<tr><td data-label="#">' + (i + 1) + '</td><td data-label="Job name">' + esc(r.job_name) + '</td><td data-label="Start">' + esc(fmtDT(r.start_date, r.start_time)) + '</td><td data-label="End">' + esc(fmtDT(r.end_date, r.end_time)) + '</td>' +
+            '<td data-label="Total qty">' + esc(r.total_qty) + '</td><td data-label="Bal. qty">' + esc(r.bal_qty) + '</td><td data-label="Operator">' + esc(r.operator) + '</td>' + act + '</tr>';
+      }).join('');
+      return '<div class="prod-sec"><div class="prod-sec-head"><span>' + SECTION_LABELS[sec] + (rows.length ? ' <span class="muted">(' + rows.length + ')</span>' : '') + '</span>' +
+        '<button type="button" class="btn btn-secondary btn-xs" data-entry-action="add" data-job-id="' + jid + '" data-section="' + sec + '">Add row</button></div>' +
+        (rows.length ? '<div class="prod-scroll"><table class="prod-table">' + '<thead>' + head + '</thead><tbody>' + body + '</tbody></table></div>' : '<p class="note-empty">No rows yet.</p>') +
+        '</div>';
+    }).join('');
+    return PM.foldHTML('prod-' + job.id, 'Production log' + (total ? ' <span class="muted">· ' + total + (total === 1 ? ' row' : ' rows') + '</span>' : ''), secs);
+  }
+
+  function openEntryForm(po, job, section, entry) {
+    const isDel = section === 'delivery';
+    const e = entry || {};
+    const me = (PM.state.user && PM.state.user.username) || '';
+    const today = PM.todayIST();
+    const f = (id, label, val, type, extra) =>
+      '<div class="field' + (extra || '') + '"><label for="ef-' + id + '">' + label + '</label><input type="' + (type || 'text') + '" id="ef-' + id + '" value="' + esc(val || '') + '"></div>';
+    const fields = isDel
+      ? f('del_date', 'Date', e.del_date || (entry ? '' : today), 'date') + f('invoice', 'Invoice no.', e.invoice) + f('quantity', 'Quantity', e.quantity, 'text', ' span-2')
+      : f('job_name', 'Job name', entry ? e.job_name : job.name, 'text', ' span-2') +
+        f('start_date', 'Start date', e.start_date || (entry ? '' : today), 'date') + f('start_time', 'Start time', e.start_time, 'time') +
+        f('end_date', 'End date', e.end_date, 'date') + f('end_time', 'End time', e.end_time, 'time') +
+        f('total_qty', 'Total qty', e.total_qty) + f('bal_qty', 'Balance qty', e.bal_qty) +
+        f('operator', 'Operator', entry ? e.operator : me, 'text', ' span-2');
+    PM.modal({
+      title: (entry ? 'Edit ' : 'Add ') + SECTION_LABELS[section].toLowerCase() + ' row',
+      eyebrow: PM.poLabel(po.number) + (job.jc_no ? ' · ' + job.jc_no : '') + ' · ' + job.name,
+      body: '<form id="entry-form" novalidate><div class="form-error hidden" data-error></div><div class="form-grid">' + fields + '</div></form>',
+      foot: '<button type="button" class="btn btn-secondary" data-close>Cancel</button><button type="submit" class="btn" form="entry-form">' + (entry ? 'Save row' : 'Add row') + '</button>',
+      onMount(el, close) {
+        PM.handleSubmit($('#entry-form', el), async () => {
+          const body = { section: section };
+          $$('#entry-form input', el).forEach((i) => { body[i.id.slice(3)] = i.value.trim(); });
+          const vals = Object.keys(body).filter((k) => k !== 'section').map((k) => body[k]);
+          if (!vals.some(Boolean)) throw new Error('Please fill in at least one field.');
+          if (entry) await api.put('/api/po/entries/' + encodeURIComponent(entry.id), body);
+          else await api.post('/api/po/jobs/' + encodeURIComponent(job.id) + '/entries', body);
+          close();
+          PM.toast(entry ? 'Row updated.' : 'Row added.');
+          PM.foldOpen.add('prod-' + job.id);
+          await refreshPO(po.id);
+        });
+      }
+    });
+  }
+
+  async function onEntryAction(btn) {
+    const act = btn.getAttribute('data-entry-action');
+    const { po, job } = findJob(btn.getAttribute('data-job-id'));
+    if (!job) return;
+    const section = btn.getAttribute('data-section');
+    const entry = ((job.entries || {})[section] || []).find((r) => String(r.id) === btn.getAttribute('data-entry-id'));
+    if (act === 'add') return openEntryForm(po, job, section, null);
+    if (act === 'edit' && entry) return openEntryForm(po, job, section, entry);
+    if (act === 'delete' && entry) {
+      const ok = await PM.confirm({ title: 'Remove this row?', message: 'It is removed from the ' + SECTION_LABELS[section].toLowerCase() + ' table of ' + (job.jc_no || job.name) + '. The audit log keeps a copy.', confirmText: 'Remove row', danger: true });
+      if (!ok) return;
+      try {
+        await api.del('/api/po/entries/' + encodeURIComponent(entry.id));
+        PM.toast('Row removed.');
+        PM.foldOpen.add('prod-' + job.id);
+        await refreshPO(po.id);
+      } catch (err) { fail(err); }
+    }
+  }
+
   /* ---------- Orders: delegated actions ---------- */
   async function onOrdersClick(e) {
     const poBtn = e.target.closest('[data-po-action]');
@@ -616,6 +759,7 @@
       }
       if (!po) return;
       if (act === 'edit') return openPOForm(po);
+      if (act === 'print-all') return PM.printJobCards(po, PM.activeJobs(po));
       if (act === 'archive') {
         const ok = await PM.confirm({
           title: 'Archive ' + PM.poLabel(po.number) + '?',
@@ -635,12 +779,16 @@
       return;
     }
 
+    const entryBtn = e.target.closest('[data-entry-action]');
+    if (entryBtn) return onEntryAction(entryBtn);
+
     const jobBtn = e.target.closest('[data-job-action]');
     if (jobBtn) {
       const act = jobBtn.getAttribute('data-job-action');
       const { po, job } = findJob(jobBtn.getAttribute('data-job-id'));
       if (!job) return;
       if (act === 'edit') return openJobForm(po, job);
+      if (act === 'print') return PM.printJobCards(po, [job]);
       if (act === 'delay') return openDelayForm(po, job);
       if (act === 'clear-delay') {
         try {
@@ -1638,6 +1786,13 @@
       if (t && !t.classList.contains('hidden')) switchTab(t.getAttribute('data-tab'));
     });
     $('#tab-orders').addEventListener('click', onOrdersClick);
+    // Remember which production logs are open across re-renders
+    $('#tab-orders').addEventListener('toggle', (e) => {
+      const d = e.target;
+      if (!d.matches || !d.matches('details[data-fold-key]')) return;
+      const k = d.getAttribute('data-fold-key');
+      if (d.open) PM.foldOpen.add(k); else PM.foldOpen.delete(k);
+    }, true);
     $('#tab-orders').addEventListener('submit', onOrdersSubmit);
     $('#tab-archive').addEventListener('click', onArchiveClick);
     $('#tab-clients').addEventListener('click', onClientsClick);

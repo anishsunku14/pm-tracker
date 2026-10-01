@@ -4,6 +4,7 @@ const path = require('path');
 const crypto = require('crypto');
 const fs = require('fs');
 const { initDb } = require('./db/database');
+const { createStore } = require('./lib/sessionStore');
 
 // Keep the session secret stable across restarts so staff aren't logged out every deploy
 function sessionSecret() {
@@ -23,19 +24,32 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.set('trust proxy', 1); // behind Nginx
+
+// One address for the site: send www.trackpmop.com to trackpmop.com,
+// so a sign-in on one isn't missing on the other.
+app.use((req, res, next) => {
+  const host = String(req.headers.host || '');
+  if (/^www\./i.test(host)) return res.redirect(301, 'https://' + host.replace(/^www\./i, '') + req.originalUrl);
+  next();
+});
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Staff stay signed in for 30 days from their last visit (until they press Sign out).
+// Sign-ins are saved to data/sessions.json so restarts and deploys don't sign anyone out.
 app.use(session({
+  name: 'pm.sid',
   secret: sessionSecret(),
+  store: createStore(path.join(__dirname, 'data')),
   resave: false,
   saveUninitialized: false,
+  rolling: true,
   cookie: {
     httpOnly: true,
-    secure: false,
+    secure: 'auto',
     sameSite: 'lax',
-    maxAge: 12 * 60 * 60 * 1000 // 12 hours
+    maxAge: 30 * 24 * 60 * 60 * 1000
   }
 }));
 

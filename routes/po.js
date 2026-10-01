@@ -1,5 +1,6 @@
 const express = require('express');
-const { dbRun, dbInsert, dbBatch, dbGet, dbAll, audit, STAGES } = require('../db/database');
+const { dbRun, dbInsert, dbBatch, dbGet, dbAll, audit, nextJcNo, STAGES } = require('../db/database');
+const JC = require('../lib/jobcard');
 const { requireAuth, requireHeadAdmin } = require('../middleware/auth');
 const P = require('../lib/poData');
 const notify = require('../lib/notify');
@@ -83,13 +84,68 @@ router.get('/track/:poNumber', (req, res) => {
 router.put('/jobs/:jobId', requireAuth, (req, res) => {
   const { job, po } = P.findJob(req.params.jobId);
   if (!job) return res.status(404).json({ error: 'Job not found.' });
-  const f = jobFields(req.body);
-  if (!f.job_name) return res.status(400).json({ error: 'Job name is required.' });
-  dbRun(`UPDATE jobs SET job_name=?, quantity_specs=?, finish_type=?, gsm=?, process=?, embellishments=?, cast_and_cure=?, other_specifications=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
-    [f.job_name, f.quantity_specs, f.finish_type, f.gsm, f.process, f.embellishments, f.cast_and_cure, f.other_specifications, job.id]);
+  const name = text(req.body.job_name || req.body.product_name || req.body.name, 200);
+  if (!name) return res.status(400).json({ error: 'Product name is required.' });
+  const card = req.body.card !== undefined ? JSON.stringify(JC.sanitizeCard(req.body.card)) : job.card;
+  // Older fields (GSM, process, etc.) are kept as they are unless explicitly sent
+  const old = jobFields(Object.assign({}, job, req.body, { job_name: name }));
+  ['quantity_specs', 'finish_type', 'gsm', 'process', 'other_specifications'].forEach((k) => { if (req.body[k] === undefined) old[k] = job[k] || ''; });
+  ['embellishments', 'cast_and_cure'].forEach((k) => { if (req.body[k] === undefined) old[k] = job[k] ? 1 : 0; });
+  dbRun(`UPDATE jobs SET job_name=?, card=?, quantity_specs=?, finish_type=?, gsm=?, process=?, embellishments=?, cast_and_cure=?, other_specifications=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+    [name, card, old.quantity_specs, old.finish_type, old.gsm, old.process, old.embellishments, old.cast_and_cure, old.other_specifications, job.id]);
   touchPO(po.id);
-  audit(me(req), 'UPDATE_JOB', { po_number: po.po_number, details: 'Updated job "' + f.job_name + '"' });
-  res.json({ message: 'Job updated.' });
+  audit(me(req), 'UPDATE_JOB', { po_number: po.po_number, details: 'Updated job card ' + (job.jc_no || '') + ' "' + name + '"' });
+  res.json({ message: 'Job card updated.' });
+});
+
+/* ---------------------------------------------------------------- Job card production rows */
+
+function findEntry(id) {
+  const e = dbGet('SELECT * FROM job_entries WHERE id = ?', [Number(id)]);
+  if (!e) return {};
+  const { job, po } = P.findJob(e.job_id);
+  return { e, job, po };
+}
+
+const SECTION_LABEL = { printing: 'Printing', punching: 'Punching/Binding', pasting: 'Pasting', delivery: 'Delivery' };
+
+router.post('/jobs/:jobId/entries', requireAuth, (req, res) => {
+  const { job, po } = P.findJob(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'Job not found.' });
+  const section = String(req.body.section || '');
+  if (JC.SECTIONS.indexOf(section) === -1) return res.status(400).json({ error: 'Unknown section.' });
+  const f = JC.sanitizeEntry(section, req.body);
+  if (!Object.values(f).some(Boolean)) return res.status(400).json({ error: 'Please fill in at least one field.' });
+  const cols = Object.keys(f);
+  const id = dbBatch(() => {
+    const newId = dbInsert('INSERT INTO job_entries (job_id, section, ' + cols.join(', ') + ', created_by) VALUES (?, ?, ' + cols.map(() => '?').join(', ') + ', ?)',
+      [job.id, section].concat(cols.map((c) => f[c]), [me(req)]));
+    touchPO(po.id);
+    return newId;
+  });
+  audit(me(req), 'ADD_JOB_CARD_ROW', { po_number: po.po_number, details: SECTION_LABEL[section] + ' row added to ' + (job.jc_no || job.job_name) });
+  res.json({ message: 'Row added.', id });
+});
+
+router.put('/entries/:id', requireAuth, (req, res) => {
+  const { e, job, po } = findEntry(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Row not found.' });
+  const f = JC.sanitizeEntry(e.section, req.body);
+  const cols = Object.keys(f);
+  dbRun('UPDATE job_entries SET ' + cols.map((c) => c + ' = ?').join(', ') + ', updated_at = CURRENT_TIMESTAMP WHERE id = ?', cols.map((c) => f[c]).concat([e.id]));
+  touchPO(po.id);
+  audit(me(req), 'UPDATE_JOB_CARD_ROW', { po_number: po.po_number, details: SECTION_LABEL[e.section] + ' row updated on ' + (job.jc_no || job.job_name) });
+  res.json({ message: 'Row updated.' });
+});
+
+// Removing a mistyped production row (the job itself is never deleted)
+router.delete('/entries/:id', requireAuth, (req, res) => {
+  const { e, job, po } = findEntry(req.params.id);
+  if (!e) return res.status(404).json({ error: 'Row not found.' });
+  dbRun('DELETE FROM job_entries WHERE id = ?', [e.id]);
+  touchPO(po.id);
+  audit(me(req), 'REMOVE_JOB_CARD_ROW', { po_number: po.po_number, details: SECTION_LABEL[e.section] + ' row removed from ' + (job.jc_no || job.job_name) + ': ' + JSON.stringify(JC.sanitizeEntry(e.section, e)) });
+  res.json({ message: 'Row removed.' });
 });
 
 // Archive a job (hidden from clients, restorable). Jobs are never deleted.
@@ -173,8 +229,8 @@ router.delete('/notes/:noteId', requireHeadAdmin, (req, res) => {
 
 // List: active POs (full) + archived POs (minimal)
 router.get('/', requireAuth, (req, res) => {
-  const active = dbAll('SELECT * FROM purchase_orders WHERE is_archived = 0 ORDER BY created_at DESC, id DESC').map((po) => P.fullPO(po));
-  const archived = dbAll('SELECT * FROM purchase_orders WHERE is_archived = 1 ORDER BY archived_at DESC, id DESC').map(P.archivedPO);
+  const active = P.fullPOs(dbAll('SELECT * FROM purchase_orders WHERE is_archived = 0 ORDER BY created_at DESC, id DESC'));
+  const archived = P.archivedPOs(dbAll('SELECT * FROM purchase_orders WHERE is_archived = 1 ORDER BY archived_at DESC, id DESC'));
   res.json({ pos: active, archived, stages: STAGES });
 });
 
@@ -192,7 +248,7 @@ router.post('/', requireAuth, (req, res) => {
     return newId;
   });
   audit(me(req), 'CREATE_PO', { po_number: number, details: 'Created PO' + (req.body.customer_name ? ' for ' + text(req.body.customer_name) : '') });
-  res.json({ message: 'PO ' + number + ' created.', id });
+  res.json({ message: (/^PO\b/i.test(number) ? number : 'PO ' + number) + ' created.', id });
 });
 
 // PO detail
@@ -225,18 +281,21 @@ router.put('/:id', requireAuth, (req, res) => {
 router.post('/:id/jobs', requireAuth, (req, res) => {
   const po = dbGet('SELECT * FROM purchase_orders WHERE id = ?', [Number(req.params.id)]);
   if (!po) return res.status(404).json({ error: 'PO not found.' });
-  const f = jobFields(req.body);
-  if (!f.job_name) return res.status(400).json({ error: 'Job name is required.' });
+  const f = jobFields(Object.assign({}, req.body, { job_name: req.body.job_name || req.body.product_name || req.body.name }));
+  if (!f.job_name) return res.status(400).json({ error: 'Product name is required.' });
+  const card = JC.sanitizeCard(req.body.card || {});
+  let jcNo;
   const jobId = dbBatch(() => {
-    const id = dbInsert(`INSERT INTO jobs (po_id, job_name, quantity_specs, finish_type, gsm, process, embellishments, cast_and_cure, other_specifications, current_stage, last_notified_stage)
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
-      [po.id, f.job_name, f.quantity_specs, f.finish_type, f.gsm, f.process, f.embellishments, f.cast_and_cure, f.other_specifications]);
+    jcNo = nextJcNo();
+    const id = dbInsert(`INSERT INTO jobs (po_id, job_name, jc_no, card, quantity_specs, finish_type, gsm, process, embellishments, cast_and_cure, other_specifications, current_stage, last_notified_stage)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+      [po.id, f.job_name, jcNo, JSON.stringify(card), f.quantity_specs, f.finish_type, f.gsm, f.process, f.embellishments, f.cast_and_cure, f.other_specifications]);
     dbRun('INSERT INTO job_stages (job_id, stage, stage_name, updated_by) VALUES (?, 1, ?, ?)', [id, P.stageName(1), me(req)]);
     touchPO(po.id);
     return id;
   });
-  audit(me(req), 'ADD_JOB', { po_number: po.po_number, details: 'Added job "' + f.job_name + '"' });
-  res.json({ message: 'Job added.', id: jobId });
+  audit(me(req), 'ADD_JOB', { po_number: po.po_number, details: 'Added job card ' + jcNo + ' "' + f.job_name + '"' });
+  res.json({ message: 'Job card ' + jcNo + ' added.', id: jobId, jc_no: jcNo });
 });
 
 // Archive / unarchive

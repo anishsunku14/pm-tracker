@@ -28,6 +28,7 @@
       </button>
 
       <div class="nav-actions" id="nav-actions">
+        <button type="button" class="btn btn-secondary btn-sm client-only" id="btn-contact" data-open-contact><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 3h3l1.5 4-2 1.2a9 9 0 0 0 4.8 4.8L13 11l4 1.5v3A1.5 1.5 0 0 1 15.5 17 13.5 13.5 0 0 1 3 4.5 1.5 1.5 0 0 1 4.5 3z"/></svg>Contact</button>
         <button type="button" class="btn btn-secondary btn-sm" id="btn-staff-login">Staff sign in</button>
 
         <div class="nav-user hidden" id="nav-client">
@@ -276,28 +277,23 @@
           <img class="footer-logo-img" src="/img/logo-on-dark.svg" alt="" width="199" height="145">
           <span class="brand-name">P.M. Offset Printers</span>
         </div>
-        <p>Offset printing, packaging and finishing for brands that care about the details.</p>
+        <p class="tagline">&ldquo;Communication is the key.<br>Printing is its media.&rdquo;</p>
+        <p class="est">Est. 1999 &middot; India</p>
       </div>
       <div>
-        <h5>Visit</h5>
+        <h5>Order support</h5>
         <ul>
-          <!-- Add your full street address here -->
-          <li>Bengaluru, Karnataka</li>
-          <li>India</li>
+          <li>For order queries, please have your PO number ready.</li>
+          <li class="hours">Mon &ndash; Sat &middot; 9:00 am &ndash; 6:00 pm IST</li>
         </ul>
       </div>
-      <div>
-        <h5>Services</h5>
+      <div class="client-only">
+        <h5>Contact us</h5>
         <ul>
-          <li>Offset printing</li>
-          <li>Packaging &amp; cartons</li>
-          <li>Foiling &amp; lamination</li>
-          <li>Post-press finishing</li>
+          <li>Planning: <a href="https://wa.me/919110600828" target="_blank" rel="noopener">+91 91106 00828</a> (WhatsApp)</li>
+          <li><a href="mailto:planning@pmoffsetprinters.com">planning@pmoffsetprinters.com</a></li>
         </ul>
-        <!-- Add phone / email here, e.g.
-        <h5 class="mt">Contact</h5>
-        <ul><li><a href="tel:+91XXXXXXXXXX">+91 XXXXX XXXXX</a></li><li><a href="mailto:hello@trackpmop.com">hello@trackpmop.com</a></li></ul>
-        -->
+        <button type="button" class="footer-link" data-open-contact>All departments &rarr;</button>
       </div>
     </div>
     <div class="footer-bottom">
@@ -385,5 +381,6 @@
 
   <script src="/js/app.js"></script>
   <script src="/js/app2.js"></script>
+  <script src="/js/print.js"></script>
 </body>
 </html>

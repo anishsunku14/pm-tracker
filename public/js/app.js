@@ -21,7 +21,23 @@
   ];
   PM.FINISH_OPTIONS = ['Matte', 'Glossy', 'Satin', 'Uncoated', 'Laminated', 'Varnished'];
   PM.GSM_OPTIONS = ['80', '100', '120', '150', '170', '200', '250', '300', '350'];
-  PM.PROCESS_OPTIONS = ['Velvet Finish', 'Matt Finish', 'Gloss Finish', 'Lamination', 'Foiling'];
+  PM.PROCESS_OPTIONS = ['Lamination', 'Pasting', 'UV Print', 'Drip Off', 'Embossing', 'Spot UV', 'Foiling'];
+  // Job card options (must match lib/jobcard.js)
+  PM.JC = {
+    COLOURS: { P3: ['C', 'M', 'Y', 'K', 'Aqua'], P4: ['C', 'M', 'Y', 'K', 'Aqua', 'White', 'UV', 'Drip'] },
+    COLOUR_NAMES: { C: 'Cyan', M: 'Magenta', Y: 'Yellow', K: 'Black', Aqua: 'Aqua', White: 'White', UV: 'UV', Drip: 'Drip' },
+    LAMINATION: ['BOPP Gloss Wet Lamination', 'Matte Wet Lamination', 'Gloss Thermal Lamination', 'Matte Thermal Lamination', 'Matt Velvet Lamination', 'Metpet Lamination'],
+    FOILING: ['Spot UV', 'Gloss', 'Regular Hot Foil', '3D Scodix Foil', 'Cast and Cure'],
+    PUNCHING: ['Bobst Machine', 'Hand Punch']
+  };
+  // Department contacts shown in the Contact window (clients and visitors only)
+  PM.DEPARTMENTS = [
+    { name: 'Planning', phone: '9110600828', email: 'planning@pmoffsetprinters.com' },
+    { name: 'Dispatch', phone: '9148856268', email: '' },
+    { name: 'Billing', phone: '9035404344', email: 'accounts@pmoffsetprinters.com' },
+    { name: 'Design', phone: '9611896022', email: 'design@pmoffsetprinters.com' },
+    { name: 'Purchase & Logistics', phone: '9620956044', email: 'purchase@pmoffsetprinters.com' }
+  ];
   PM.ROLE_LABELS = { head_admin: 'Managing Director', planning: 'Planning', staff: 'Staff' };
 
   PM.state = {
@@ -234,9 +250,18 @@
     j = j || {};
     const notes = pickArray(j.notes || j.activity || j.activity_log || [], []).map(PM.normNote);
     notes.sort((a, b) => PM.tsValue(b.at) - PM.tsValue(a.at));
+    const card = j.card && typeof j.card === 'object' ? j.card : null;
     return {
       raw: j,
       id: j.id != null ? j.id : j.job_id,
+      jc_no: j.jc_no || '',
+      card: card,
+      entries: j.entries || null,
+      job_size: j.job_size || (card && card.job_size) || '',
+      qty: (card && card.quantity) || j.quantity || j.quantity_specs || '',
+      lamination: asArray(j.lamination || (card && card.lamination) || []),
+      foiling: asArray(j.foiling || (card && card.foiling) || []),
+      isPublic: j.product_name !== undefined && !card,
       name: j.job_name || j.name || j.job_type || j.title || 'Job ' + ((i || 0) + 1),
       quantity_specs: j.quantity_specs || j.quantity || j.specs || '',
       finish_type: listStr(j.finish_type || j.finish),
@@ -373,16 +398,97 @@
     return esc(v);
   }
 
+  function chips(list) {
+    return list && list.length
+      ? '<span class="tag-list">' + list.map((x) => '<span class="tag">' + esc(x) + '</span>').join('') + '</span>'
+      : '<span class="no">—</span>';
+  }
+  function dash(v) { return v ? esc(v) : '<span class="no">—</span>'; }
+  function specGrid(rows) {
+    return '<div class="specs">' + rows.map((s) =>
+      '<div class="spec' + (s[2] ? ' wide' : '') + '"><span class="k">' + s[0] + '</span><span class="v">' + s[1] + '</span></div>'
+    ).join('') + '</div>';
+  }
+  function legacySpecs(job) {
+    const rows = [];
+    if (job.gsm) rows.push(['GSM', esc(job.gsm)]);
+    if (job.process) rows.push(['Process', esc(job.process)]);
+    if (flagOn(job.embellishments)) rows.push(['Embellishments', flagVal(job.embellishments)]);
+    if (flagOn(job.cast_and_cure)) rows.push(['Cast &amp; cure', flagVal(job.cast_and_cure)]);
+    if (job.other) rows.push(['Other specifications', esc(job.other), true]);
+    return rows;
+  }
+  function flagOn(v) { return truthy(v) || (!!v && !/^(0|false|no)$/i.test(String(v))); }
+  PM.flagOn = flagOn;
+
+  /** Collapsible section that remembers whether it was open across re-renders */
+  PM.foldOpen = new Set();
+  PM.foldHTML = function (key, title, body) {
+    return '<details class="prod" data-fold-key="' + esc(key) + '"' + (PM.foldOpen.has(key) ? ' open' : '') + '><summary>' + title + '</summary>' + body + '</details>';
+  };
+
+  PM.colourSwatch = function (name) {
+    return '<span class="swatch sw-' + esc(String(name).toLowerCase()) + '" aria-hidden="true"></span>';
+  };
+
+  /** Details shown under a job. Staff see the whole job card; clients see a short public set. */
   PM.renderSpecs = function (job) {
-    const specs = [];
-    specs.push(['GSM', job.gsm ? esc(job.gsm) : '<span class="no">—</span>']);
-    specs.push(['Finish', job.finish_type ? esc(job.finish_type) : '<span class="no">—</span>']);
-    specs.push(['Process', job.process ? esc(job.process) : '<span class="no">—</span>']);
-    specs.push(['Embellishments', flagVal(job.embellishments)]);
-    specs.push(['Cast &amp; cure', flagVal(job.cast_and_cure)]);
-    let html = specs.map((s) => '<div class="spec"><span class="k">' + s[0] + '</span><span class="v">' + s[1] + '</span></div>').join('');
-    if (job.other) html += '<div class="spec wide"><span class="k">Other specifications</span><span class="v">' + esc(job.other) + '</span></div>';
-    return '<div class="specs">' + html + '</div>';
+    const c = job.card;
+    if (c) {
+      let html = specGrid([
+        ['Job size', dash(c.job_size)],
+        ['Quantity', dash(c.quantity || job.quantity_specs)],
+        ['Material', dash(c.material)],
+        ['Machine', c.machine ? esc(c.machine) : dash('')],
+        ['Lamination', chips(c.lamination)],
+        ['Foiling', chips(c.foiling)]
+      ]);
+
+      const rows = [
+        ['Material rate', dash(c.material_rate)],
+        ['Bill no.', dash(c.bill_no)],
+        ['Bill date', c.bill_date ? esc(PM.fmtDate(c.bill_date)) : dash('')],
+        ['New plate no.', dash(c.new_plate_no)],
+        ['Old plate no.', dash(c.old_plate_no)],
+        ['Die no.', dash(c.die_no)],
+        ['Punching / binding', chips(c.punching)]
+      ];
+      if (c.job_details) rows.push(['Job details', esc(c.job_details), true]);
+      if (c.processing_details) rows.push(['Processing details', esc(c.processing_details), true]);
+      let inner = specGrid(rows);
+
+      const cols = c.machine ? PM.JC.COLOURS[c.machine] : [];
+      const colourCells = cols.map((n) => {
+        const v = (c.colours || {})[n] || {};
+        return '<div class="ink-cell' + (v.plate || v.ink ? ' on' : '') + '">' + PM.colourSwatch(n) +
+          '<span class="ink-name">' + esc(n) + '</span>' +
+          '<span class="ink-plate">' + (v.plate ? '✓ Plate' : '') + '</span>' +
+          '<span class="ink-amt">' + esc(v.ink || '') + '</span></div>';
+      }).join('');
+      if (colourCells) inner += '<div class="card-sec-title">Plate details &amp; inks consumption · ' + esc(c.machine) + '</div><div class="ink-grid">' + colourCells + '</div>';
+
+      const ins = [];
+      if (c.printing_instructions) ins.push(['Printing instructions', esc(c.printing_instructions), true]);
+      if (c.foiling_instructions) ins.push(['Foiling instructions', esc(c.foiling_instructions), true]);
+      if (c.packing_instructions) ins.push(['Packing instructions', esc(c.packing_instructions), true]);
+      if (ins.length) inner += '<div class="card-sec-title">Instructions</div>' + specGrid(ins);
+
+      const legacy = legacySpecs(job);
+      if (legacy.length) inner += '<div class="card-sec-title">Earlier details</div>' + specGrid(legacy);
+
+      html += PM.foldHTML('card-' + job.id, 'Full job card' + (job.jc_no ? ' <span class="muted">· ' + esc(job.jc_no) + '</span>' : ''), '<div class="fold-body">' + inner + '</div>');
+      return '<div class="jobcard-view">' + html + '</div>';
+    }
+    if (job.isPublic) {
+      return specGrid([
+        ['Job size', dash(job.job_size)],
+        ['Quantity', dash(job.qty)],
+        ['Lamination', chips(job.lamination)],
+        ['Foiling', chips(job.foiling)]
+      ]);
+    }
+    const legacy = legacySpecs(job);
+    return legacy.length ? specGrid(legacy) : '';
   };
 
   PM.renderNotes = function (job, opts) {
@@ -425,7 +531,7 @@
       '<article class="job' + (job.delayed ? ' is-delayed' : '') + '" data-job-id="' + esc(job.id) + '">' +
       '<header class="job-head"><div class="job-title">' +
       '<h4>' + esc(job.name) + '</h4>' +
-      '<span class="job-index">Job ' + (idx + 1) + (job.quantity_specs ? ' · ' + esc(job.quantity_specs) : '') + '</span>' +
+      '<span class="job-index">' + (job.jc_no ? 'J.C. No. ' + esc(job.jc_no) : 'Job ' + (idx + 1)) + (job.qty ? ' · ' + esc(job.qty) : '') + '</span>' +
       '</div><div class="job-actions">' + PM.jobBadge(job) + (opts.actionsHtml || '') + '</div></header>' +
       '<div class="job-body">' +
       (job.delayed
@@ -433,6 +539,7 @@
         : '') +
       PM.renderPipeline(job, !!opts.editable) +
       PM.renderSpecs(job) +
+      (opts.afterSpecs || '') +
       PM.renderNotes(job, { form: opts.noteForm, canDelete: opts.canDeleteNotes }) +
       '</div></article>'
     );
@@ -474,7 +581,7 @@
     const q = (f.q || '').trim().toLowerCase().replace(/\s+/g, '');
     let out = pos.filter((po) => {
       if (q) {
-        const hay = [po.number, po.customer, po.codes.join(' '), PM.activeJobs(po).map((j) => j.name + ' ' + j.quantity_specs).join(' '), po.jobNames.join(' ')]
+        const hay = [po.number, po.customer, po.codes.join(' '), PM.activeJobs(po).map((j) => j.name + ' ' + j.jc_no + ' ' + j.qty).join(' '), po.jobNames.join(' ')]
           .join(' ').toLowerCase().replace(/\s+/g, '');
         if (hay.indexOf(q) === -1) return false;
       }
@@ -659,6 +766,9 @@
 
   function updateNav() {
     const u = PM.state.user, c = PM.state.client, v = PM.state.view;
+    document.body.classList.toggle('is-staff', !!u);
+    const contactBtn = $('#btn-contact');
+    if (contactBtn) contactBtn.classList.toggle('hidden', !!u || v === 'setup');
     const showStaff = !!u;
     const showClient = !u && !!c && v === 'client';
     $('#nav-staff').classList.toggle('hidden', !showStaff);
@@ -895,6 +1005,31 @@
       PM.setLoading(btn, false);
     }
   }
+
+  /* Contact window: department phone numbers and emails */
+  const ICON_WA = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8s-.4-.1-.6.1-.7.8-.8 1-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.4.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2 5.2 5.2 0 0 0 1.1 2.7 11.8 11.8 0 0 0 4.5 4c1.7.7 2.3.8 3.2.6a2.7 2.7 0 0 0 1.8-1.2 2.2 2.2 0 0 0 .1-1.2c0-.1-.2-.2-.5-.3z"/></svg>';
+  const ICON_MAIL = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="15" height="11" rx="2"/><path d="M3 6l7 5 7-5"/></svg>';
+  function fmtPhone(p) {
+    const d = String(p).replace(/\D/g, '').slice(-10);
+    return '+91 ' + d.slice(0, 5) + ' ' + d.slice(5);
+  }
+  function openContact() {
+    PM.modal({
+      title: 'Contact us',
+      subtitle: 'Tap a number to chat on WhatsApp, or an email to write to us. Please have your PO number ready.',
+      body: '<div class="dept-list">' + PM.DEPARTMENTS.map((d) =>
+        '<div class="dept"><span class="dept-name">' + esc(d.name) + '</span><div class="dept-actions">' +
+        '<a class="wa" href="https://wa.me/91' + esc(String(d.phone).replace(/\D/g, '').slice(-10)) + '" target="_blank" rel="noopener" title="Chat with ' + esc(d.name) + ' on WhatsApp">' + ICON_WA + esc(fmtPhone(d.phone)) + '</a>' +
+        (d.email ? '<a href="mailto:' + esc(d.email) + '" title="Email ' + esc(d.name) + '">' + ICON_MAIL + esc(d.email) + '</a>' : '') +
+        '</div></div>').join('') + '</div>' +
+        '<p class="contact-hours">Mon &ndash; Sat &middot; 9:00 am &ndash; 6:00 pm IST</p>',
+      noAutofocus: true
+    });
+  }
+  PM.openContact = openContact;
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-open-contact]')) openContact();
+  });
 
   /* Alert preferences: each contact picks email and/or WhatsApp */
   async function openClientAlerts() {

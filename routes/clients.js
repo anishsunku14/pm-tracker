@@ -82,12 +82,12 @@ router.post('/dashboard', (req, res) => {
   failures.delete(ip);
   req.session.client = { id: client.id, code: client.client_code };
 
-  const pos = dbAll(
+  const rows = dbAll(
     'SELECT p.* FROM purchase_orders p JOIN po_clients pc ON pc.po_id = p.id WHERE pc.client_id = ? AND p.is_archived = 0 ORDER BY p.created_at DESC, p.id DESC',
     [client.id]
-  ).map((po) => {
-    const full = P.fullPO(po, { public: true });
-    full.id = po.id; // needed for expand/collapse on the dashboard
+  );
+  const pos = P.fullPOs(rows, { public: true }).map((full, i) => {
+    full.id = rows[i].id; // needed for expand/collapse on the dashboard
     return full;
   });
 
